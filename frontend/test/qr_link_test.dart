@@ -38,4 +38,34 @@ void main() {
       'http://192.168.29.114:8080/',
     );
   });
+
+  test('the server serving the app gives one fixed address for phones', () {
+    // Whatever port or mode the kiosk was started with, the QR points at the
+    // server (port 8100), which serves the built app.
+    for (final opened in [
+      'http://localhost:46265/#/kiosk/phone',
+      'http://localhost:8090/#/kiosk/phone',
+      'http://192.168.100.152:46265/',
+    ]) {
+      expect(
+        publicBase(
+          Uri.parse(opened),
+          '',
+          '192.168.100.152',
+          phone: 'http://192.168.100.152:8100',
+        ).replace(fragment: '/phone/AB12').toString(),
+        'http://192.168.100.152:8100/#/phone/AB12',
+      );
+    }
+    // A real domain still wins.
+    expect(
+      publicBase(
+        Uri.parse('http://localhost:46265/'),
+        'https://medora.example.com',
+        '192.168.100.152',
+        phone: 'http://192.168.100.152:8100',
+      ).host,
+      'medora.example.com',
+    );
+  });
 }

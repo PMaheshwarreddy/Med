@@ -282,6 +282,23 @@ class _Health extends StatelessWidget {
         ? (true, '${formatCount(sync['pending'] as int)} rows waiting to copy')
         : (true, 'Up to date, last copied ${formatDate(sync['lastSuccess'])}');
 
+    // The knowledge database (MEDORA_KNOWLEDGE_DATABASE_URL), counted live.
+    final totals = (k?['totals'] as Map?)?.cast<String, dynamic>();
+    final knowledgeOk = k?['reachable'] == true;
+    final numbers = totals == null
+        ? ''
+        : '${formatCount((totals['symptoms'] as num?) ?? 0)} symptoms, '
+              '${formatCount((totals['diseases'] as num?) ?? 0)} diseases, '
+              '${formatCount((totals['medications'] as num?) ?? 0)} medications';
+    final knowledgeDetail = k == null
+        ? 'Not checked'
+        : k['configured'] != true
+        ? 'Knowledge database not set up'
+        : knowledgeOk
+        ? numbers
+        : 'Knowledge database not reachable'
+              '${numbers.isEmpty ? '' : ' (last counted: $numbers)'}';
+
     return Column(
       children: [
         _HealthLine(
@@ -298,15 +315,7 @@ class _Health extends StatelessWidget {
         ),
         _HealthLine('Report model', true, overview['reportModel'] as String),
         _HealthLine('Central database copy', mirrorOk, mirror),
-        _HealthLine(
-          'Medical knowledge',
-          k != null && k['ready'] == true,
-          k != null && k['ready'] == true
-              ? '${formatCount(k['diseases'] as int)} diseases, '
-                    '${formatCount(k['symptoms'] as int)} symptoms, '
-                    '${formatCount(k['drugs'] as int)} drugs'
-              : 'Not loaded',
-        ),
+        _HealthLine('Medical knowledge', knowledgeOk, knowledgeDetail),
       ],
     );
   }

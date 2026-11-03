@@ -100,6 +100,9 @@ class Status(ApiModel):
     # kiosk opened as localhost can put a phone-reachable address in its QR
     # codes; empty when it has none.
     lan_address: str = ""
+    # Where a phone opens this app's pages (QR codes): this server's LAN
+    # address and port when it serves the built web app; empty otherwise.
+    phone_base: str = ""
 
 
 class TenantCreate(ApiModel):

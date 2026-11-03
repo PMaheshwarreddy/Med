@@ -216,3 +216,67 @@ create table if not exists kb_disease_symptoms (
 );
 create index if not exists kb_disease_symptoms_norm on kb_disease_symptoms (normalized);
 create index if not exists kb_disease_symptoms_symptom on kb_disease_symptoms (symptom_normalized);
+
+-- Diseases, symptoms and medicines as data files name them (CSV/JSON/OBO/XML uploads
+-- planned by the AI, articles, and Medora's earlier knowledge tables, source
+-- medora-legacy). The symptom-evidence search (app/knowledge_base.py) reads these
+-- with kb_disease_symptoms. `enrich` rows only add other names and text to a row
+-- of the same name from another source; they never stand alone.
+create table if not exists kb_entities (
+    id bigserial primary key,
+    source_id int not null references kb_sources(id) on delete cascade,
+    kind text not null,                    -- disease | symptom | drug
+    name text not null,
+    normalized text not null,
+    aliases text[] not null default '{}',
+    description text not null default '',
+    causes text not null default '',
+    dosage text not null default '',
+    uses text not null default '',
+    side_effects text not null default '',
+    enrich boolean not null default false
+);
+create index if not exists kb_entities_norm on kb_entities (kind, normalized);
+
+create table if not exists kb_disease_drugs (
+    id bigserial primary key,
+    source_id int not null references kb_sources(id) on delete cascade,
+    disease text not null,
+    normalized text not null,
+    drug text not null,
+    drug_normalized text not null
+);
+create index if not exists kb_disease_drugs_norm on kb_disease_drugs (normalized);
+
+-- Advice for a disease (or a symptom), shown only after a model picks the ones that fit.
+create table if not exists kb_precautions (
+    id bigserial primary key,
+    source_id int not null references kb_sources(id) on delete cascade,
+    disease text not null default '',
+    normalized text not null default '',
+    symptom text not null default '',
+    symptom_normalized text not null default '',
+    precaution text not null
+);
+create index if not exists kb_precautions_norm on kb_precautions (normalized);
+
+-- Files uploaded in the back office (Database tab) and what became of them.
+-- Each loaded upload is a source of its own (kb_sources.key = source_key).
+create table if not exists kb_uploads (
+    id serial primary key,
+    filename text not null,
+    sha256 text unique not null,
+    bytes bigint not null,
+    path text not null,
+    kind text not null,                    -- pdf | records | article | other
+    status text not null,                  -- reading | planned | approved | loading | loaded | failed | skipped | removed
+    stage text not null default '',        -- what it is doing now, in words
+    source_key text not null default '',
+    meta jsonb not null default '{}',      -- title, publisher, licence, tier, kind, production_allowed
+    plan jsonb not null default '{}',
+    stats jsonb not null default '{}',
+    note text not null default '',
+    created_by text not null default '',
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);

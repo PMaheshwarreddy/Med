@@ -1,9 +1,16 @@
-"""Retrieval over the medical knowledge (the "R" of the report's RAG).
+"""Symptom evidence over the medical knowledge (one of the report's two searches;
+the guideline passages are the other, app/kb/retrieve.py).
 
 Given the symptoms a patient described, in whatever words, this finds the
 matching symptom rows, follows the disease links, and scores each candidate
 disease by the evidence for it. It is deterministic and needs no language
 model, so the same evidence is available online and offline.
+
+The data comes from the knowledge database (MEDORA_KNOWLEDGE_DATABASE_URL,
+tables kb_entities, kb_disease_symptoms, kb_disease_drugs, kb_precautions,
+kb_drugs) of the sources reports may use. A copy of what was read is kept on
+disk (data/rag_cache/kb_index.json.gz), so the search works when that
+database cannot be reached. The app database (Supabase) holds no knowledge.
 
   1. Symptom matching: exact name, alias or spelling variant first; then
      meaning, by embedding similarity ("my head is pounding" -> Headache).
@@ -12,20 +19,20 @@ model, so the same evidence is available online and offline.
   3. For the best candidates: description, linked drugs and precautions.
 """
 
+import gzip
 import hashlib
+import json
 import logging
 import math
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 import numpy as np
-from sqlalchemy import Engine, inspect, select
-from sqlalchemy.orm import Session
 
 from .ingest.transform import fuzzy_key, normalize
-from .knowledge_models import Disease, DiseaseLink, Drug, Precaution, Symptom
 
 log = logging.getLogger("medora.knowledge")
 
@@ -42,6 +49,10 @@ MIN_SIMILARITY = 0.68
 SYNONYM_SIMILARITY = 0.82
 MAX_NEIGHBOURS = 3
 MAX_CANDIDATES = 8
+# How often the index asks the knowledge database whether anything changed,
+# and how long it leaves an unreachable database alone.
+CHECK_EVERY = 60.0
+CONNECT_TIMEOUT = 5
 # Listed as drugs in the sources, but in advice to a patient they are just
 # words: "drink plenty of water" must not be mistaken for naming a medicine.
 _EVERYDAY_SUBSTANCES = {
@@ -114,16 +125,62 @@ class Evidence:
         return {normalize(d["name"]): d["name"] for c in self.candidates for d in c.drugs}
 
 
-class KnowledgeIndex:
-    """Search structures over the knowledge tables, built on first use and
-    rebuilt when the data changes."""
+def _allowed_sql() -> str:
+    return (
+        "s.status = 'loaded' and (s.production_allowed"
+        " or (%(testing)s and s.tier <= 4) or (%(community)s and s.tier = 5))"
+    )
 
-    def __init__(self, engine: Engine, embedder: Embedder | None, cache_dir: Path):
-        self._engine = engine
+
+# What the index reads, per allowed source (see `KnowledgeIndex.read_rows`).
+_QUERIES = {
+    "entities": """select e.kind, e.name, e.aliases, e.description, e.causes, e.uses, e.enrich
+                   from kb_entities e join kb_sources s on s.id = e.source_id where {allowed}
+                   order by s.tier, s.id, e.id""",
+    "pairs": """select x.disease, x.symptom from kb_disease_symptoms x
+                join kb_sources s on s.id = x.source_id where {allowed} order by s.tier, s.id, x.id""",
+    "disease_drugs": """select x.disease, x.drug from kb_disease_drugs x
+                        join kb_sources s on s.id = x.source_id where {allowed} order by s.tier, s.id, x.id""",
+    "precautions": """select x.disease, x.symptom, x.precaution from kb_precautions x
+                      join kb_sources s on s.id = x.source_id where {allowed} order by s.tier, s.id, x.id""",
+    # Every medicine name any source holds: only used to keep medicine names
+    # out of patient advice, so the wider the better.
+    "drug_names": "select name from kb_drugs",
+}
+
+
+class KnowledgeIndex:
+    """Search structures over the knowledge database, built on first use and
+    rebuilt when a source is loaded, changed or removed."""
+
+    def __init__(
+        self,
+        url: str,
+        embedder: Embedder | None,
+        cache_dir: Path,
+        testing_sources: bool = False,
+        community_sources: bool = False,
+    ):
+        self._url = url.replace("postgresql+psycopg://", "postgresql://") if url else ""
         self._embedder = embedder
         self._cache_dir = cache_dir
+        self._switches = {"testing": testing_sources, "community": community_sources}
         self._lock = threading.Lock()
-        self._signature: tuple | None = None
+        self._signature: list | None = None
+        self._checked = 0.0  # when the database was last asked (monotonic)
+        self.last_error = ""
+        self.source = "none"  # database | disk copy | given rows | none
+        self._reset()
+
+    @classmethod
+    def from_rows(cls, rows: dict, embedder: Embedder | None, cache_dir: Path) -> "KnowledgeIndex":
+        """An index over rows given directly (tests, tools): no database."""
+        index = cls("", embedder, cache_dir)
+        index._build(rows)
+        index.source = "given rows"
+        return index
+
+    def _reset(self) -> None:
         self._by_key: dict[str, int] = {}
         self._by_fuzzy: dict[str, int] = {}
         self._names: dict[int, str] = {}
@@ -133,9 +190,7 @@ class KnowledgeIndex:
         self._vector_ids: list[int] = []
         self._drug_keys: set[str] = set()
         # Disease details, medicines and precautions, held in memory so the
-        # search answers without the database (Supabase) when the internet
-        # is gone. Loaded with the rest while online; nothing is written to
-        # disk except the symptom vectors.
+        # search answers without the database.
         self._diseases: dict[int, tuple[str, str, str]] = {}  # id -> name, description, causes
         self._disease_by_key: dict[str, int] = {}  # name or unambiguous other name -> id
         self._disease_aliases: dict[int, list[str]] = {}
@@ -145,105 +200,196 @@ class KnowledgeIndex:
     # --- building -----------------------------------------------------------
 
     def available(self) -> bool:
-        if self._symptom_diseases:
-            return True
-        try:
-            if "disease_links" not in inspect(self._engine).get_table_names():
-                return False
-            with Session(self._engine) as db:
-                return db.scalar(select(DiseaseLink.id).limit(1)) is not None
-        except Exception:
-            return False  # database unreachable and nothing loaded yet
+        """Whether there is knowledge to search. Never waits on a database."""
+        return bool(self._symptom_diseases)
 
     def warm(self) -> None:
-        """Builds the index ahead of the first request. Never raises."""
+        """Builds the index ahead of the first request (from the database, or
+        from the copy on disk when it cannot be reached). Never raises."""
         try:
-            self._ensure()
+            self._ensure(force=True)
         except Exception:
             log.exception("Could not build the knowledge index")
 
-    def _ensure(self) -> bool:
+    def refresh_soon(self) -> None:
+        """Asks the database again at the next search (after a load)."""
+        self._checked = 0.0
+
+    @property
+    def _cache_file(self) -> Path:
+        return self._cache_dir / "kb_index.json.gz"
+
+    def _ensure(self, force: bool = False) -> bool:
         """Loads or refreshes the index. False when there is no knowledge.
-        Without the database (offline), a loaded index keeps serving."""
-        try:
-            return self._refresh()
-        except Exception as e:
-            if self._symptom_diseases:
-                log.info("Knowledge database unreachable, using the loaded index: %s", str(e)[:120])
-                return True
-            raise
-
-    def _refresh(self) -> bool:
-        if "disease_links" not in inspect(self._engine).get_table_names():
-            return False
-        with self._lock, Session(self._engine) as db:
-            from sqlalchemy import func
-
-            signature = (
-                db.scalar(select(func.count()).select_from(DiseaseLink)),
-                db.scalar(select(func.max(DiseaseLink.id))),
-                db.scalar(select(func.count()).select_from(Symptom)),
-            )
-            if signature == self._signature:
-                return bool(self._symptom_diseases)
-            self._build(db)
-            self._signature = signature
+        The database is asked at most every CHECK_EVERY seconds; when it
+        cannot be reached, the loaded index (or the disk copy) keeps serving."""
+        if not self._url:
             return bool(self._symptom_diseases)
+        if not force and time.monotonic() - self._checked < CHECK_EVERY:
+            return bool(self._symptom_diseases)
+        with self._lock:
+            if not force and time.monotonic() - self._checked < CHECK_EVERY:
+                return bool(self._symptom_diseases)
+            self._checked = time.monotonic()
+            try:
+                self._refresh()
+                self.last_error = ""
+            except Exception as e:  # noqa: BLE001 - unreachable, or tables not created yet
+                self.last_error = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+                if not self._symptom_diseases:
+                    self._load_disk_copy()
+                log.info("Knowledge database not readable (%s); %s", self.last_error,
+                         "using the loaded index" if self._symptom_diseases else "no knowledge loaded")
+        return bool(self._symptom_diseases)
 
-    def _build(self, db: Session) -> None:
+    def _connect(self):
+        import psycopg
+
+        return psycopg.connect(self._url, connect_timeout=CONNECT_TIMEOUT, prepare_threshold=None)
+
+    def _refresh(self) -> None:
+        with self._connect() as conn:
+            signature = [
+                *conn.execute(
+                    f"""select count(*), coalesce(md5(string_agg(s.key || ':' || coalesce(s.loaded_at::text, ''),
+                        ',' order by s.key)), '') from kb_sources s where {_allowed_sql()}""",
+                    self._switches,
+                ).fetchone(),
+                self._switches["testing"], self._switches["community"],
+            ]
+            if signature == self._signature and self._symptom_diseases:
+                return
+            rows = self.read_rows(conn, self._switches)
+        self._build(rows)
+        self._signature = signature
+        self.source = "database"
+        self._save_disk_copy(rows, signature)
+
+    @staticmethod
+    def read_rows(conn, switches: dict) -> dict:
+        allowed = _allowed_sql()
+        return {
+            name: [list(r) for r in conn.execute(sql.format(allowed=allowed), switches).fetchall()]
+            for name, sql in _QUERIES.items()
+        }
+
+    def _save_disk_copy(self, rows: dict, signature: list) -> None:
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            part = self._cache_file.with_suffix(".part")
+            with gzip.open(part, "wt", encoding="utf-8") as f:
+                json.dump({"signature": signature, "saved": time.time(), "rows": rows}, f, ensure_ascii=False)
+            part.replace(self._cache_file)
+        except OSError as e:
+            log.warning("Could not save the knowledge index copy: %s", e)
+
+    def _load_disk_copy(self) -> None:
+        if not self._cache_file.exists():
+            return
+        try:
+            with gzip.open(self._cache_file, "rt", encoding="utf-8") as f:
+                saved = json.load(f)
+            self._build(saved["rows"])
+        except (OSError, ValueError, KeyError) as e:
+            log.warning("The knowledge index copy could not be read: %s", e)
+            return
+        self.source = "disk copy"
+        log.info("Knowledge index loaded from the copy on disk (the knowledge database is not reachable)")
+
+    def _build(self, rows: dict) -> None:
+        """Builds every structure from rows of the knowledge database. Rows of
+        the same disease, symptom or medicine from several sources are merged
+        by name; an `enrich` row only adds other names and text to a row that
+        exists without it."""
+        self._reset()
+        disease_ids: dict[str, int] = {}
+        symptom_ids: dict[str, int] = {}
+        disease_info: dict[int, dict] = {}
+        symptom_info: dict[int, dict] = {}
+
+        def disease(name: str) -> int | None:
+            key = normalize(name or "")
+            if not key:
+                return None
+            if key not in disease_ids:
+                disease_ids[key] = len(disease_ids) + 1
+                disease_info[disease_ids[key]] = {"name": name.strip(), "description": "", "causes": "", "aliases": {}}
+            return disease_ids[key]
+
+        def symptom(name: str) -> int | None:
+            key = normalize(name or "")
+            if not key:
+                return None
+            if key not in symptom_ids:
+                symptom_ids[key] = len(symptom_ids) + 1
+                symptom_info[symptom_ids[key]] = {"name": name.strip(), "aliases": {}}
+            return symptom_ids[key]
+
+        entities = rows.get("entities", [])
+        # Rows that stand on their own first, then the ones that only enrich.
+        for kind, name, aliases, description, causes, _uses, enrich in sorted(entities, key=lambda r: bool(r[6])):
+            key = normalize(name or "")
+            if not key:
+                continue
+            if kind == "disease":
+                if enrich and key not in disease_ids:
+                    continue
+                info = disease_info[disease(name)]
+                info["description"] = info["description"] or (description or "")
+                info["causes"] = info["causes"] or (causes or "")
+                for alias in aliases or []:
+                    info["aliases"].setdefault(normalize(str(alias)), str(alias))
+            elif kind == "symptom":
+                if enrich and key not in symptom_ids:
+                    continue
+                info = symptom_info[symptom(name)]
+                for alias in aliases or []:
+                    info["aliases"].setdefault(normalize(str(alias)), str(alias))
+
+        pairs: set[tuple[int, int]] = set()
+        for d_name, s_name in rows.get("pairs", []):
+            d, s = disease(d_name), symptom(s_name)
+            if d and s:
+                pairs.add((d, s))
+
         sizes: dict[int, int] = {}
-        pairs = db.execute(
-            select(DiseaseLink.disease_id, DiseaseLink.symptom_id).where(
-                DiseaseLink.symptom_id.is_not(None)
-            )
-        ).all()
         for disease_id, _ in pairs:
             sizes[disease_id] = sizes.get(disease_id, 0) + 1
         self._disease_size = {d: n for d, n in sizes.items() if n <= MAX_SYMPTOMS_PER_DISEASE}
         symptom_diseases: dict[int, list[int]] = {}
-        for disease_id, symptom_id in pairs:
+        for disease_id, symptom_id in sorted(pairs):
             if disease_id in self._disease_size:
                 symptom_diseases.setdefault(symptom_id, []).append(disease_id)
         self._symptom_diseases = symptom_diseases
 
         # Only symptoms that lead to a disease are worth matching.
-        self._by_key, self._by_fuzzy, self._names = {}, {}, {}
         texts: list[str] = []
         ids: list[int] = []
-        rows = db.execute(select(Symptom.id, Symptom.name, Symptom.normalized_name, Symptom.aliases))
-        for symptom_id, name, key, aliases in rows:
+        for symptom_id, info in symptom_info.items():
             if symptom_id not in symptom_diseases:
                 continue
+            name, key = info["name"], normalize(info["name"])
             self._names[symptom_id] = name
-            self._by_key[key] = symptom_id
+            self._by_key.setdefault(key, symptom_id)
             self._by_fuzzy.setdefault(fuzzy_key(key), symptom_id)
             texts.append(name)
             ids.append(symptom_id)
-            for alias in aliases or []:
-                alias_key = normalize(alias)
+            for alias_key, alias in info["aliases"].items():
+                if not alias_key:
+                    continue
                 self._by_key.setdefault(alias_key, symptom_id)
                 self._by_fuzzy.setdefault(fuzzy_key(alias_key), symptom_id)
                 texts.append(alias)
                 ids.append(symptom_id)
         self._vector_ids = ids
         self._vectors = self._embed_cached(texts)
-        # Names of five letters or more: shorter ones ("iron", "zinc") are
-        # also everyday words.
-        self._drug_keys = {
-            key
-            for key in db.scalars(select(Drug.normalized_name))
-            if len(key) >= 5 and key not in _EVERYDAY_SUBSTANCES
-        }
-        self._diseases, self._disease_by_key, self._disease_aliases = {}, {}, {}
+
         alias_owners: dict[str, set[int]] = {}
-        for disease_id, name, key, description, causes, aliases in db.execute(
-            select(Disease.id, Disease.name, Disease.normalized_name, Disease.description, Disease.causes,
-                   Disease.aliases)
-        ):
-            self._diseases[disease_id] = (name, description or "", causes or "")
+        for disease_id, info in disease_info.items():
+            key = normalize(info["name"])
+            self._diseases[disease_id] = (info["name"], info["description"], info["causes"])
             self._disease_by_key[key] = disease_id
-            for alias in aliases or []:
-                akey = normalize(str(alias))
+            for akey in info["aliases"]:
                 if len(akey) >= 4 and akey != key:
                     alias_owners.setdefault(akey, set()).add(disease_id)
         # Another name finds its disease ("scabies" -> Acariasis), unless two
@@ -253,22 +399,35 @@ class KnowledgeIndex:
                 (owner,) = owners
                 self._disease_by_key[akey] = owner
                 self._disease_aliases.setdefault(owner, []).append(akey)
-        self._drugs = {}
-        for disease_id, name, uses in db.execute(
-            select(DiseaseLink.disease_id, Drug.name, Drug.uses)
-            .join(Drug, DiseaseLink.drug_id == Drug.id)
-            .order_by(DiseaseLink.disease_id, Drug.name)
-        ):
+
+        uses = {normalize(r[1] or ""): (r[5] or "") for r in entities if r[0] == "drug"}
+        seen_links: set[tuple[int, str]] = set()
+        for d_name, drug in sorted(rows.get("disease_drugs", []), key=lambda r: (normalize(r[0] or ""), r[1] or "")):
+            disease_id = self._disease_by_key.get(normalize(d_name or ""))
+            key = normalize(drug or "")
+            if disease_id is None or not key or (disease_id, key) in seen_links:
+                continue
+            seen_links.add((disease_id, key))
             found = self._drugs.setdefault(disease_id, [])
             if len(found) < 12:
-                found.append({"name": name, "uses": (uses or "")[:240]})
-        self._precautions = {}
-        for disease_id, line in db.execute(
-            select(Precaution.disease_id, Precaution.precaution).order_by(Precaution.id)
-        ):
+                found.append({"name": drug.strip(), "uses": uses.get(key, "")[:240]})
+        for d_name, _symptom, line in rows.get("precautions", []):
+            disease_id = self._disease_by_key.get(normalize(d_name or ""))
+            if disease_id is None or not line:
+                continue
             found = self._precautions.setdefault(disease_id, [])
-            if len(found) < 8:
+            if len(found) < 8 and line not in found:
                 found.append(line)
+
+        # Names of five letters or more: shorter ones ("iron", "zinc") are
+        # also everyday words.
+        drug_names = [r[1] for r in entities if r[0] == "drug"]
+        drug_names += [r[1] for r in rows.get("disease_drugs", [])]
+        drug_names += [r[0] for r in rows.get("drug_names", [])]
+        self._drug_keys = {
+            key for key in (normalize(n or "") for n in drug_names)
+            if len(key) >= 5 and key not in _EVERYDAY_SUBSTANCES
+        }
         log.info(
             "Knowledge index: %d symptoms, %d diseases, vectors %s",
             len(self._names), len(self._disease_size), "on" if self._vectors is not None else "off",

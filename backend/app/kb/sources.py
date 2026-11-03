@@ -53,6 +53,14 @@ SOURCES: tuple[Source, ...] = (
            "NCBI MedGen (free; includes names from SNOMED CT, NCI, MeSH, HPO, MONDO)", True,
            ("medora_2/MGCONSO.RRF",), "medgen", licence_note="Only synonyms of concepts already linked to Disease Ontology or HPO.",
            after=("doid", "hpo")),
+    # --- Medora's own earlier knowledge (moved here from the app database) ---
+    Source("medora-legacy", "Medora knowledge tables (diseases, symptoms, drugs, links, precautions)", "Medora",
+           "exported 2026-10-30", "disease_lists", 5,
+           "Compiled from community datasets (Kaggle-style disease lists, MedlinePlus, ontologies)", True,
+           ("backend/data/kb_legacy/supabase-knowledge-2026-10-30.json",), "legacy",
+           "The tables the report's symptom evidence and stored precautions used before 2026-10-30, moved "
+           "unchanged from the app database (Supabase), which no longer holds knowledge. Allowed in reports "
+           "because they already were; the evidence only suggests, the panel and reviews decide."),
     # --- Indian government clinical sources ---
     Source("icmr-stw-vol1", "Standard Treatment Workflows of India, Vol. 1", "ICMR, Department of Health Research", "2019",
            "guideline", 1, _STW_LICENCE, False, ("medora_4/Vol1.pdf",), "stw", _STW_NOTE),

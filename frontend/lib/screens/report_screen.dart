@@ -303,6 +303,8 @@ class _ReportScreenState extends ConsumerState<ReportScreen> {
 
     return MedoraScaffold(
       step: FlowStep.report,
+      // The visit is saved by now: Home just finishes it.
+      confirmHome: false,
       maxWidth: 720,
       child: ReportLanguage(
         code: report?.patientView?.language ?? s.language.code,

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # without switching off the network). Copying back to Supabase waits too.
     force_offline: bool = False
     data_dir: Path = Path("data")
+    # The built web app (`flutter build web`), served by this server on its
+    # own port so phones always have one fixed address for the QR pages
+    # (http://<LAN address>:8100/#/phone/...), however the kiosk was started.
+    web_app_dir: Path = Path(__file__).resolve().parents[2] / "frontend/build/web"
     cors_origins: list[str] = ["*"]
     max_upload_mb: int = 200
 

@@ -11,8 +11,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ..knowledge_models import ENTITY_FIELDS
-from .plan import Col, EntityOutput, LinkOutput, Plan, PrecautionOutput
+from .plan import ENTITY_FIELDS, Col, EntityOutput, LinkOutput, Plan, PrecautionOutput
 from .records import Record, get_values
 
 # Longest name each table accepts, in characters and words. Anything longer

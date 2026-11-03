@@ -6,13 +6,15 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from . import background
 from .db import make_engine
-from .ingest.pipeline import Pipeline
 from .ingest.planner import make_ingest_llm
+from .kb.stats import KnowledgeStats
+from .kb.uploads import UploadDesk
 from .knowledge_base import Embedder, KnowledgeIndex
 from .offline import UNREACHABLE, OfflineState
 from .panel import LocalPanel, SpecialistPanel
@@ -29,6 +31,17 @@ from .tenancy import ensure_default_tenant, ensure_schema
 from .voice import make_voice_provider
 
 log = logging.getLogger("medora")
+
+
+class _WebApp(StaticFiles):
+    """The built web app; a plain 404 while there is no build yet."""
+
+    async def get_response(self, path: str, scope):
+        if not Path(self.directory, "index.html").exists():
+            from starlette.exceptions import HTTPException
+
+            raise HTTPException(404)
+        return await super().get_response(path, scope)
 
 
 def make_retriever(settings: Settings):
@@ -75,7 +88,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     except UNREACHABLE:
                         continue
                     log.info("Database reached; setup finished")
-                    await asyncio.to_thread(app.state.kb.warm)
                     return
 
             setup = asyncio.create_task(retry())
@@ -86,6 +98,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             asyncio.get_running_loop().run_in_executor(None, app.state.kb.warm)
             if app.state.retriever is not None:
                 asyncio.get_running_loop().run_in_executor(None, app.state.retriever.warm)
+            async def move_legacy() -> None:
+                # Medora's earlier knowledge (moved out of Supabase) goes into
+                # the knowledge database as soon as it can be reached.
+                from .kb.uploads import ensure_legacy
+
+                while not await asyncio.to_thread(ensure_legacy, settings.knowledge_database_url, settings):
+                    await asyncio.sleep(120)
+                app.state.kb.refresh_soon()
+                app.state.kb_stats.forget()
+
+            app.state.legacy_task = asyncio.create_task(move_legacy())
             task = asyncio.create_task(
                 background.run(
                     app.state.runtime, app.state.engine, settings.cloud_database_url,
@@ -93,7 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             )
         yield
-        for running in (task, setup):
+        for running in (task, setup, getattr(app.state, "legacy_task", None)):
             if running:
                 running.cancel()
         app.state.engine.dispose()
@@ -114,16 +137,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.voice_provider = make_voice_provider(settings)
     # SLOT: the offline pipeline (Whisper -> local model -> Piper) goes here.
     app.state.offline_voice_provider = None
+    # All medical knowledge lives in the knowledge database
+    # (MEDORA_KNOWLEDGE_DATABASE_URL, app/kb); the app database (Supabase)
+    # holds none. The symptom evidence index reads it (with a copy on disk
+    # for when it cannot be reached).
     app.state.kb = KnowledgeIndex(
-        app.state.engine,
+        settings.knowledge_database_url,
         Embedder(settings.ollama_url, settings.ollama_embed_model)
         if settings.ollama_embed_model
         else None,
         Path(settings.data_dir) / "rag_cache",
+        testing_sources=settings.knowledge_testing_sources,
+        community_sources=settings.knowledge_community_sources,
     )
     # Guideline RAG over the knowledge database (app/kb), with MedCPT; None
     # when the database is not configured or the models are missing.
     app.state.retriever = make_retriever(settings)
+    # The Database tab: live counts, and files uploaded into the knowledge
+    # database (each becomes a source, read like `python -m app.kb load`).
+    app.state.kb_stats = KnowledgeStats(
+        settings.knowledge_database_url,
+        Path(settings.data_dir) / "kb_summary.json",
+        Path(settings.data_dir) / "rag_cache",
+        testing=settings.knowledge_testing_sources,
+        community=settings.knowledge_community_sources,
+    )
+
+    def knowledge_changed() -> None:
+        app.state.kb.refresh_soon()
+        app.state.kb_stats.forget()
+
+    app.state.uploads = UploadDesk(
+        settings.knowledge_database_url,
+        make_ingest_llm(settings),
+        Path(settings.data_dir) / "knowledge_uploads",
+        settings=settings,
+        retriever=app.state.retriever,
+        on_loaded=knowledge_changed,
+    )
     # The panel needs a capable hosted model; offline the report is written
     # by the single local model instead.
     app.state.panel = (
@@ -132,9 +183,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if settings.gemini_api_key
         else None
-    )
-    app.state.ingest = Pipeline(
-        app.state.engine, make_ingest_llm(settings), Path(settings.data_dir) / "ingest_cache"
     )
 
     app.add_middleware(
@@ -183,6 +231,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(doctor.patient_router)
     # Filling the intake on the patient's own phone (QR at the kiosk).
     app.include_router(handoff.router)
+    # Last, so every API route above wins: the built web app, for phones (a
+    # QR code always points here) and for anyone opening port 8100 directly.
+    # check_dir=False: a build made after the server started is served too.
+    app.mount("/", _WebApp(directory=settings.web_app_dir, html=True, check_dir=False), name="web")
     return app
 
 

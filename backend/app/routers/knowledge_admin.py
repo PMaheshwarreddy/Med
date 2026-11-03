@@ -1,26 +1,20 @@
-"""Back office: browsing the medical knowledge and running ingestion."""
+"""Back office: the knowledge database (MEDORA_KNOWLEDGE_DATABASE_URL).
 
+What it holds (counted live) and uploading files into it. There is no
+browsing of raw passages on purpose (2026-11-02: meaningless to operators). The
+app database (Supabase) holds no medical knowledge any more: everything here
+reads and writes the knowledge database only.
+"""
+
+import asyncio
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
-from sqlalchemy import String, cast, func, inspect, or_, select
+from anyio import to_thread
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 
-from ..deps import Admin, AppSettings, Db
-from ..ingest.pipeline import IngestError, Pipeline, init_db, legacy_tables
-from ..ingest.transform import normalize
-from ..knowledge_models import (
-    ENTITY_FIELDS,
-    ENTITY_MODELS,
-    Disease,
-    DiseaseLink,
-    Drug,
-    IngestionReject,
-    IngestionRun,
-    Precaution,
-    Symptom,
-)
-from ..llm import LlmError
+from ..deps import Admin, AppSettings
+from ..kb.uploads import PDF_KINDS, TIERS, UploadDesk, UploadError
 from ..schemas import ApiModel
 from ..tenancy import record
 
@@ -29,209 +23,120 @@ router = APIRouter(prefix="/api/admin/knowledge", dependencies=[Admin])
 _CHUNK = 1024 * 1024
 
 
-def _pipeline(request: Request) -> Pipeline:
-    return request.app.state.ingest
-
-
-def _ready(request: Request) -> bool:
-    return "ingestion_runs" in inspect(request.app.state.engine).get_table_names()
-
-
-def _require_ready(request: Request) -> None:
-    if not _ready(request):
-        raise HTTPException(409, "The knowledge tables have not been created yet")
-
-
-def _fail(error: Exception):
-    raise HTTPException(409 if isinstance(error, IngestError) else 502, str(error)) from error
-
-
-# --- browsing ---------------------------------------------------------------
-
-
-@router.get("/summary")
-def summary(request: Request, db: Db) -> dict:
-    if not _ready(request):
-        return {"ready": False, "legacyTables": legacy_tables(request.app.state.engine)}
-
-    def count(model, *where) -> int:
-        return db.scalar(select(func.count()).select_from(model).where(*where))
-
-    return {
-        "ready": True,
-        "diseases": count(Disease),
-        "symptoms": count(Symptom),
-        "drugs": count(Drug),
-        "symptomLinks": count(DiseaseLink, DiseaseLink.symptom_id.is_not(None)),
-        "drugLinks": count(DiseaseLink, DiseaseLink.drug_id.is_not(None)),
-        "precautions": count(Precaution),
-        "diseasesWithDescription": count(Disease, Disease.description != ""),
-    }
-
-
-@router.post("/init")
-def create_tables(request: Request) -> dict:
-    """Creates the knowledge tables. Never replaces tables of an older
-    layout; that needs the command line, on purpose."""
+def _desk(request: Request) -> UploadDesk:
+    desk = request.app.state.uploads
     try:
-        init_db(request.app.state.engine)
-    except IngestError as e:
-        _fail(e)
-    record(request.app.state.engine, "knowledge.init", "Knowledge tables created")
-    return {"ready": True}
+        desk.loop = asyncio.get_running_loop()
+    except RuntimeError:  # called from a worker thread
+        pass
+    return desk
 
 
-@router.get("/{table}")
-def browse(
-    table: str,
-    request: Request,
-    db: Db,
-    q: str = "",
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-) -> dict:
-    if table not in ENTITY_MODELS:
-        raise HTTPException(404, "Unknown table")
-    _require_ready(request)
-    model = ENTITY_MODELS[table]
-    query = select(model)
-    if key := normalize(q):
-        # Aliases are searched as stored text; names by their matching key.
-        query = query.where(
-            or_(
-                model.normalized_name.contains(key),
-                func.lower(cast(model.aliases, String)).contains(q.strip().lower()),
-            )
-        )
-    total = db.scalar(select(func.count()).select_from(query.subquery()))
-    rows = db.scalars(query.order_by(model.name).limit(limit).offset(offset)).all()
-    link_column = {
-        "diseases": DiseaseLink.disease_id,
-        "symptoms": DiseaseLink.symptom_id,
-        "drugs": DiseaseLink.drug_id,
-    }[table]
-    links = dict(
-        db.execute(
-            select(link_column, func.count())
-            .where(link_column.in_([r.id for r in rows]))
-            .group_by(link_column)
-        ).all()
-    )
-    return {
-        "total": total,
-        "items": [
-            {
-                "id": r.id,
-                "name": r.name,
-                "aliases": r.aliases or [],
-                "links": links.get(r.id, 0),
-                **{f: getattr(r, f) for f in ENTITY_FIELDS[table]},
-            }
-            for r in rows
-        ],
-    }
+def _fail(error: UploadError):
+    raise HTTPException(error.status, str(error)) from error
 
 
-@router.get("/diseases/{disease_id}")
-def disease_detail(disease_id: int, request: Request, db: Db) -> dict:
-    _require_ready(request)
-    disease = db.get(Disease, disease_id)
-    if disease is None:
-        raise HTTPException(404, "Disease not found")
-    symptoms = db.scalars(
-        select(Symptom.name)
-        .join(DiseaseLink, DiseaseLink.symptom_id == Symptom.id)
-        .where(DiseaseLink.disease_id == disease_id)
-        .order_by(Symptom.name)
-    ).all()
-    drugs = db.scalars(
-        select(Drug.name)
-        .join(DiseaseLink, DiseaseLink.drug_id == Drug.id)
-        .where(DiseaseLink.disease_id == disease_id)
-        .order_by(Drug.name)
-    ).all()
-    precautions = db.scalars(
-        select(Precaution.precaution).where(Precaution.disease_id == disease_id)
-    ).all()
-    return {
-        "id": disease.id,
-        "name": disease.name,
-        "aliases": disease.aliases or [],
-        "description": disease.description,
-        "causes": disease.causes,
-        "symptoms": symptoms,
-        "drugs": drugs,
-        "precautions": precautions,
-    }
-
-
-# --- ingestion --------------------------------------------------------------
-
-
-def _run_out(run: IngestionRun, rejects: list | None = None) -> dict:
-    plan = run.plan
+def _upload_out(u: dict, detail: bool = False) -> dict:
+    stats, plan, meta = u["stats"] or {}, u["plan"] or {}, u["meta"] or {}
     out = {
-        "id": run.id,
-        "filename": run.filename,
-        "sizeBytes": run.size_bytes,
-        "status": run.status,
-        "note": run.note,
-        "createdAt": run.created_at.isoformat(),
+        "id": u["id"],
+        "filename": u["filename"],
+        "sizeBytes": u["bytes"],
+        "kind": u["kind"],
+        "status": u["status"],
+        "stage": u["stage"],
+        "note": u["note"],
+        "title": meta.get("title", ""),
+        "publisher": meta.get("publisher", ""),
+        "tier": meta.get("tier", 5),
+        "reports": meta.get("production_allowed", False),
+        "createdAt": u["created_at"].isoformat(),
+        "updatedAt": u["updated_at"].isoformat(),
         "summary": plan.get("summary", ""),
         "verdict": plan.get("verdict", ""),
-        "confidence": plan.get("confidence", 0),
-        "content": plan.get("content", ""),
-        "needsReview": run.stats.get("needs_review", []),
-        "preview": run.stats.get("preview"),
-        "loaded": run.stats.get("loaded"),
+        "needsReview": stats.get("needs_review", []),
+        "preview": stats.get("preview"),
+        "loaded": stats.get("loaded"),
     }
-    if rejects is not None:
+    if detail:
         out |= {
             "reason": plan.get("reason", ""),
             "model": plan.get("model", ""),
-            "outputs": plan.get("outputs", []),
-            "revised": run.stats.get("revised", []),
-            "droppedNotInArticle": run.stats.get("dropped_not_in_article", []),
-            "rejects": [{"reason": r, "value": v} for r, v in rejects],
+            "confidence": plan.get("confidence", 0),
+            "content": plan.get("content", ""),
+            "outputs": plan.get("outputs", []) if plan.get("content") != "article" else [],
+            "revised": stats.get("revised", []),
+            "droppedNotInArticle": stats.get("dropped_not_in_article", []),
+            "licence": meta.get("licence", ""),
+            "documentKind": meta.get("kind", ""),
         }
     return out
 
 
-@router.get("/ingest/runs")
-def list_runs(request: Request) -> list[dict]:
-    _require_ready(request)
-    return [_run_out(r) for r in reversed(_pipeline(request).runs())]
+# --- what is in it ----------------------------------------------------------
 
 
-@router.get("/ingest/runs/{run_id}")
-def run_detail(run_id: int, request: Request, db: Db) -> dict:
-    _require_ready(request)
-    run = db.get(IngestionRun, run_id)
-    if run is None:
-        raise HTTPException(404, "Run not found")
-    rejects = db.execute(
-        select(IngestionReject.reason, IngestionReject.value)
-        .where(IngestionReject.run_id == run_id)
-        .limit(60)
-    ).all()
-    return _run_out(run, rejects)
+@router.get("/summary")
+async def summary(request: Request, settings: AppSettings) -> dict:
+    """Counts from the knowledge database (reused for a few seconds; the last
+    counts when it cannot be reached), plus how the reports' searches stand."""
+    out = await to_thread.run_sync(request.app.state.kb_stats.summary)
+    kb = request.app.state.kb
+    out["evidenceIndex"] = {"available": kb.available(), "from": kb.source}
+    out["switches"] = {"testing": settings.knowledge_testing_sources, "community": settings.knowledge_community_sources}
+    out["choices"] = {"tiers": {str(k): v for k, v in TIERS.items()}, "documentKinds": PDF_KINDS}
+    return out
 
 
-@router.post("/ingest/upload", status_code=201)
-async def upload(file: UploadFile, request: Request, settings: AppSettings) -> dict:
-    """Stores a source file and has the AI plan it. Nothing is loaded until
-    the plan is approved."""
-    _require_ready(request)
+# --- uploads ----------------------------------------------------------------
+
+
+@router.get("/uploads")
+async def list_uploads(request: Request) -> list[dict]:
+    try:
+        uploads = await to_thread.run_sync(_desk(request).list)
+    except UploadError as e:
+        _fail(e)
+    return [_upload_out(u) for u in uploads]
+
+
+@router.get("/uploads/{upload_id}")
+async def upload_detail(upload_id: int, request: Request) -> dict:
+    try:
+        upload = await to_thread.run_sync(_desk(request).get, upload_id)
+    except UploadError as e:
+        _fail(e)
+    return _upload_out(upload, detail=True)
+
+
+@router.post("/uploads", status_code=201)
+async def upload(
+    file: UploadFile,
+    request: Request,
+    settings: AppSettings,
+    title: str = "",
+    publisher: str = "",
+    edition: str = "",
+    licence: str = "",
+    tier: int = 5,
+    kind: str = "guideline",
+    reports: bool = False,
+) -> dict:
+    """Stores a file and starts on it: a PDF is read and loaded at once; a
+    data file or article is planned by the AI and waits for approval."""
+    desk = _desk(request)
+    if not desk.configured:
+        raise HTTPException(503, "The knowledge database is not set up (MEDORA_KNOWLEDGE_DATABASE_URL)")
     # The uploaded name is only displayed; on disk the file gets a generated
-    # name, so path tricks in it cannot escape the knowledge folder.
+    # name, so path tricks in it cannot escape the uploads folder.
     original = Path(file.filename or "").name
     if not original:
         raise HTTPException(400, "The file has no name")
-    folder = Path(settings.data_dir) / "knowledge"
-    folder.mkdir(parents=True, exist_ok=True)
-    target = folder / (uuid.uuid4().hex + Path(original).suffix.lower()[:16])
+    desk.folder.mkdir(parents=True, exist_ok=True)
+    target = desk.folder / (uuid.uuid4().hex + Path(original).suffix.lower()[:16])
     limit = settings.max_upload_mb * 1024 * 1024
     size = 0
+    user = getattr(getattr(request.state, "admin_user", None), "email", "") or ""
     try:
         with target.open("wb") as out:
             while chunk := await file.read(_CHUNK):
@@ -241,59 +146,49 @@ async def upload(file: UploadFile, request: Request, settings: AppSettings) -> d
                 out.write(chunk)
         if size == 0:
             raise HTTPException(400, "The file is empty")
-        run, created = await _pipeline(request).plan_file(target, filename=original[:255])
+        meta = {"title": title, "publisher": publisher, "edition": edition, "licence": licence,
+                "tier": tier, "kind": kind, "reports": reports}
+        created = await to_thread.run_sync(desk.receive, target, original[:255], meta, user)
+    except UploadError as e:
+        target.unlink(missing_ok=True)
+        _fail(e)
     except BaseException:
         target.unlink(missing_ok=True)
         raise
-    if not created:
-        target.unlink(missing_ok=True)
-        raise HTTPException(
-            409, f"This file's content was already ingested as {run.filename!r} (run {run.id})"
-        )
-    record(request.app.state.engine, "knowledge.planned", f"{original}: {run.status}")
-    return _run_out(run)
+    record(request.app.state.engine, "knowledge.uploaded", f"{original} ({created['kind']})")
+    return _upload_out(created)
 
 
 class ReasonBody(ApiModel):
     text: str
 
 
-@router.post("/ingest/runs/{run_id}/{action}")
-async def act(
-    run_id: int, action: str, request: Request, body: ReasonBody | None = None
-) -> dict:
-    """approve | reject | revise | load | undo."""
-    _require_ready(request)
-    pipeline = _pipeline(request)
+@router.post("/uploads/{upload_id}/{action}")
+async def act(upload_id: int, action: str, request: Request, body: ReasonBody | None = None) -> dict:
+    """approve | reject | revise | retry | remove | allow | block (reports' use)."""
+    desk = _desk(request)
     text = (body.text if body else "").strip()
     try:
         if action == "approve":
-            run = pipeline.approve(run_id)
+            upload = await to_thread.run_sync(desk.approve, upload_id)
         elif action == "reject":
             if not text:
                 raise HTTPException(422, "Say why the file is rejected")
-            run = pipeline.reject(run_id, text)
+            upload = await to_thread.run_sync(desk.reject, upload_id, text)
         elif action == "revise":
             if not text:
                 raise HTTPException(422, "Say what should change")
-            run = await pipeline.revise(run_id, text)
-        elif action == "load":
-            # Large files take a while; keep the event loop free meanwhile.
-            from anyio import to_thread
-
-            run = await to_thread.run_sync(pipeline.load, run_id)
-        elif action == "undo":
-            pipeline.undo(run_id)
-            run = next(r for r in pipeline.runs() if r.id == run_id)
+            upload = await desk.revise(upload_id, text)
+        elif action == "retry":
+            upload = await to_thread.run_sync(desk.retry, upload_id)
+        elif action == "remove":
+            upload = await to_thread.run_sync(desk.remove, upload_id)
+        elif action in ("allow", "block"):
+            upload = await to_thread.run_sync(desk.set_reports, upload_id, action == "allow")
         else:
             raise HTTPException(404, "Unknown action")
-    except (IngestError, LlmError) as e:
+    except UploadError as e:
         _fail(e)
-    level = "error" if run.status == "failed" else "info"
-    record(
-        request.app.state.engine,
-        f"knowledge.{action}",
-        f"{run.filename}: {run.status}" + (f" ({run.note})" if run.note else ""),
-        level=level,
-    )
-    return _run_out(run)
+    record(request.app.state.engine, f"knowledge.{action}", f"{upload['filename']}: {upload['status']}",
+           level="error" if upload["status"] == "failed" else "info")
+    return _upload_out(upload)

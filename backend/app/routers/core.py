@@ -58,10 +58,21 @@ def lan_address() -> str:
         return ""
 
 
+def phone_base(request: Request, settings, lan: str) -> str:
+    """The fixed address phones open (http://<LAN address>:<this port>), when
+    this server serves the built web app; else empty and the kiosk falls back
+    to its own address."""
+    if not lan or not (settings.web_app_dir / "index.html").exists():
+        return ""
+    port = request.url.port
+    return f"http://{lan}" + (f":{port}" if port and port != 80 else "")
+
+
 @router.get("/status", response_model=Status)
 def status(request: Request, db: Db, settings: AppSettings):
     state = request.app.state
     online = state.runtime.online
+    lan = lan_address()
     not_set_up = "Not set up on this server"
     needs_internet = "Needs an internet connection"
 
@@ -83,7 +94,8 @@ def status(request: Request, db: Db, settings: AppSettings):
         else Capability(available=False, detail="No knowledge data has been ingested"),
         sms=delivery_capability(delivery.sms_configured(settings)),
         email=delivery_capability(delivery.email_configured(settings)),
-        lan_address=lan_address(),
+        lan_address=lan,
+        phone_base=phone_base(request, settings, lan),
     )
 
 

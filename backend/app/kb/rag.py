@@ -259,3 +259,37 @@ def check_doses(retriever: Retriever | None, medicines: list[dict], evidence: Ev
                     break
         out.append({**m, "doseEvidence": {"found": found, "source": where} if dose else {"found": False, "source": ""}})
     return out
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

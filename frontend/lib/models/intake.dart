@@ -621,6 +621,7 @@ class ServiceStatus {
     this.sms = false,
     this.email = false,
     this.lanAddress = '',
+    this.phoneBase = '',
   });
 
   /// The kiosk cannot reach its own server at all.
@@ -630,7 +631,8 @@ class ServiceStatus {
       voiceDetail = 'The Medora server cannot be reached.',
       sms = false,
       email = false,
-      lanAddress = '';
+      lanAddress = '',
+      phoneBase = '';
 
   ServiceStatus.fromJson(Map<String, dynamic> j)
     : online = j['online'] as bool,
@@ -638,7 +640,12 @@ class ServiceStatus {
       voiceDetail = (j['voice'] as Map)['detail'] as String? ?? '',
       sms = (j['sms'] as Map)['available'] as bool,
       email = (j['email'] as Map)['available'] as bool,
-      lanAddress = j['lanAddress'] as String? ?? '';
+      lanAddress = j['lanAddress'] as String? ?? '',
+      phoneBase = j['phoneBase'] as String? ?? '';
+
+  /// The fixed address phones open (the server's LAN address and port, when
+  /// it serves the built app); empty when it does not.
+  final String phoneBase;
 
   /// The server's address on the local network, for QR codes phones scan.
   final String lanAddress;

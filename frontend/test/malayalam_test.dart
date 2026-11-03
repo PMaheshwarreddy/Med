@@ -85,13 +85,44 @@ void main() {
     await pumpKiosk(tester);
     expect(find.text('Speak'), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('language-toggle')));
+    // The language is chosen on the welcome page, not in the top bar.
+    expect(find.byKey(const Key('language-toggle')), findsNothing);
+    await tester.tap(find.byKey(const Key('welcome-language-ml')));
     await tester.pump();
     expect(find.text('സംസാരിക്കുക'), findsOneWidget);
     expect(find.text('Speak'), findsNothing);
 
-    await tester.tap(find.byKey(const Key('language-toggle')));
+    await tester.tap(find.byKey(const Key('welcome-language-en')));
     await tester.pump();
+    expect(find.text('Speak'), findsOneWidget);
+  });
+
+  testWidgets('Home goes back to the start, after asking', (tester) async {
+    await pumpKiosk(tester);
+    expect(find.byKey(const Key('kiosk-home')), findsNothing); // welcome
+    // ...which has its way back to the back office instead.
+    expect(find.byKey(const Key('kiosk-back-office')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('welcome-language-ml')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('mode-manual')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const Key('language-toggle')), findsNothing);
+
+    await tester.tap(find.byKey(const Key('kiosk-home')));
+    await tester.pump();
+    expect(find.text('തുടക്കത്തിലേക്ക് മടങ്ങണോ?'), findsOneWidget);
+    await tester.tap(find.text('റദ്ദാക്കുക')); // cancel: stays
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('നിങ്ങളെക്കുറിച്ച് പറയൂ'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('kiosk-home')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('kiosk-home-confirm')));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    // Back on the welcome page, in English for the next patient.
     expect(find.text('Speak'), findsOneWidget);
   });
 
@@ -99,7 +130,7 @@ void main() {
     tester,
   ) async {
     final requests = await pumpKiosk(tester);
-    await tester.tap(find.byKey(const Key('language-toggle')));
+    await tester.tap(find.byKey(const Key('welcome-language-ml')));
     await tester.pump();
     await tester.tap(find.byKey(const Key('mode-manual')));
     await tester.pump();

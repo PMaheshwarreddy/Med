@@ -32,21 +32,30 @@ const medoraPublicUrl = String.fromEnvironment('MEDORA_PUBLIC_URL');
 /// followed). Empty until known.
 String serverLanAddress = '';
 
+/// Where phones open this app's pages, as `/api/status` last reported it:
+/// `http://<LAN address>:8100`, the server itself serving the built app.
+/// The same address however the kiosk was started (any port, debug or not),
+/// so a QR code always works. Empty when the server has no build.
+String serverPhoneBase = '';
+
 /// A page of this app (e.g. `/r/<visit>`) as a link a phone can open.
 Uri publicLink(String route) => publicBase(
   Uri.base,
   medoraPublicUrl,
   serverLanAddress,
+  phone: serverPhoneBase,
 ).replace(fragment: route);
 
 /// The address phones should use, from where the kiosk was [opened], the
 /// build's [define] (MEDORA_PUBLIC_URL) and the server's [lan] address:
 /// - a real domain in [define] (https://medora.example.com) always wins;
+/// - then the server's [phone] address (it serves the built app on its own
+///   fixed port: the standard path, independent of how the kiosk started);
 /// - a kiosk opened as localhost uses the server's current network address
 ///   with the port the app is served on (a phone cannot reach "localhost",
 ///   and an address baked in at start goes stale when the Wi-Fi changes);
 /// - else [define], else the kiosk's own address.
-Uri publicBase(Uri opened, String define, String lan) {
+Uri publicBase(Uri opened, String define, String lan, {String phone = ''}) {
   final defined = define.isEmpty ? null : Uri.tryParse(define);
   bool isIp(String host) =>
       RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host) || host.contains(':');
@@ -55,6 +64,10 @@ Uri publicBase(Uri opened, String define, String lan) {
       defined.host != 'localhost' &&
       !isIp(defined.host)) {
     return defined;
+  }
+  final served = phone.isEmpty ? null : Uri.tryParse(phone);
+  if (served != null && served.host.isNotEmpty) {
+    return served.replace(path: '/');
   }
   final local = {'localhost', '127.0.0.1', '::1', ''}.contains(opened.host);
   if (local && lan.isNotEmpty) {
@@ -216,6 +229,7 @@ class ApiClient {
     final body = await _send(() => _http.get(_uri('/api/status')));
     final status = ServiceStatus.fromJson(body as Map<String, dynamic>);
     if (status.lanAddress.isNotEmpty) serverLanAddress = status.lanAddress;
+    serverPhoneBase = status.phoneBase;
     return status;
   }
 
@@ -501,8 +515,9 @@ class ApiClient {
     required String filename,
     required Stream<List<int>> bytes,
     required int length,
+    Map<String, String>? query,
   }) async {
-    final request = http.MultipartRequest('POST', _uri(path))
+    final request = http.MultipartRequest('POST', _uri(path, query))
       ..headers.addAll(_headers(adminKey: adminKey))
       ..files.add(
         http.MultipartFile('file', bytes, length, filename: filename),

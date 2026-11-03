@@ -30,6 +30,7 @@ class FakeServer {
     },
   ]; // fmt: skip
   String runStatus = 'planned';
+  bool knowledgeReachable = true;
   static const owner = {
     'id': 'u1',
     'email': 'owner@medora.io',
@@ -60,9 +61,17 @@ class FakeServer {
     'id': 7,
     'filename': 'mystery_file.csv',
     'sizeBytes': 2048,
+    'kind': 'records',
     'status': runStatus,
+    'stage': '',
     'note': '',
+    'title': 'mystery file',
+    'publisher': 'Not stated',
+    'licence': 'Not stated',
+    'tier': 5,
+    'reports': true,
     'createdAt': '2026-10-12T08:00:00Z',
+    'updatedAt': '2026-10-12T08:00:00Z',
     'summary': 'Diseases with their symptoms',
     'verdict': 'usable',
     'confidence': 0.9,
@@ -78,12 +87,7 @@ class FakeServer {
       'reject_rate': 0.0,
     },
     'loaded': runStatus == 'loaded'
-        ? {
-            'diseases': {'created': 2},
-            'symptoms': {'created': 3},
-            'links': {'created': 4},
-            'precautions': {'created': 0},
-          }
+        ? {'diseases': 2, 'symptoms': 3, 'symptom links': 4, 'quarantined': 0}
         : null,
     'reason': 'Clear disease and symptom columns.',
     'model': 'fake',
@@ -103,7 +107,60 @@ class FakeServer {
     ],
     'revised': <String>[],
     'droppedNotInArticle': <String>[],
-    'rejects': <Map<String, dynamic>>[],
+  }; // fmt: skip
+
+  Map<String, dynamic> get knowledgeSummary => {
+    'configured': true,
+    'reachable': knowledgeReachable,
+    'error': knowledgeReachable ? '' : 'connection failed',
+    'countedAt': '2026-10-30T09:00:00Z',
+    'totals': {
+      'sources': 31,
+      'passages': 44400,
+      'searchablePassages': 44400,
+      'conditions': 11853,
+      'names': 512000,
+      'medicines': 2210,
+      'brands': 251000,
+      'doses': 3400,
+      'safetyNotes': 9000,
+      'redFlags': 700,
+      'symptomLinks': 18015,
+      'drugLinks': 6451,
+      'precautions': 596,
+      'listedEntries': 9597,
+      'patientTopics': 1000,
+      'quarantined': 120,
+      'lastLoadedAt': '2026-10-29T10:00:00Z',
+      'databaseSize': '2 GB',
+      'symptoms': 73739,
+      'diseases': 21790,
+      'medications': 3384,
+    },
+    'sources': [
+      {
+        'key': 'msf-clinical-2024',
+        'title': 'MSF Clinical guidelines',
+        'publisher': 'Médecins Sans Frontières',
+        'kind': 'guideline',
+        'tier': 2,
+        'status': 'loaded',
+        'productionAllowed': false,
+        'loadedAt': '2026-10-29T10:00:00Z',
+        'passages': 5200,
+        'quarantined': 3,
+        'uploaded': false,
+        'inReports': 'testing',
+        'error': '',
+      },
+    ],
+    'offline': {'passages': 18300, 'savedAt': '2026-10-29T11:00:00Z'},
+    'evidenceIndex': {'available': true, 'from': 'database'},
+    'switches': {'testing': true, 'community': false},
+    'choices': {
+      'tiers': {'1': 'Indian government', '5': 'Community dataset'},
+      'documentKinds': {'guideline': 'Clinical guideline'},
+    },
   }; // fmt: skip
 
   Future<http.Response> handle(http.Request request) async {
@@ -271,18 +328,7 @@ class FakeServer {
         'smartBand': true,
       });
     }
-    if (path == '/api/admin/knowledge/summary') {
-      return json({
-        'ready': true,
-        'diseases': 2667,
-        'symptoms': 6732,
-        'drugs': 3067,
-        'symptomLinks': 161741,
-        'drugLinks': 6473,
-        'precautions': 596,
-        'diseasesWithDescription': 85,
-      }); // fmt: skip
-    }
+    if (path == '/api/admin/knowledge/summary') return json(knowledgeSummary);
     if (path == '/api/admin/tenants' && request.method == 'GET') {
       return json(clients);
     }
@@ -343,27 +389,24 @@ class FakeServer {
         },
       ]); // fmt: skip
     }
-    if (path == '/api/admin/knowledge/ingest/runs') return json([run]);
-    if (path == '/api/admin/knowledge/ingest/runs/7') return json(run);
-    if (path == '/api/admin/knowledge/ingest/runs/7/approve') {
-      runStatus = 'approved';
-      return json(run);
-    }
-    if (path == '/api/admin/knowledge/ingest/runs/7/load') {
+    if (path == '/api/admin/knowledge/uploads') return json([run]);
+    if (path == '/api/admin/knowledge/uploads/7') return json(run);
+    if (path == '/api/admin/knowledge/uploads/7/approve') {
       runStatus = 'loaded';
       return json(run);
     }
-    if (path == '/api/admin/knowledge/diseases') {
+    if (path == '/api/admin/knowledge/browse/passages') {
       return json({
-        'total': 2667,
+        'total': 44400,
         'items': [
           {
-            'id': 1,
-            'name': 'Asthma',
-            'aliases': ['Bronchial asthma'],
-            'links': 26,
-            'description': 'A long-term airway disease.',
-            'causes': '',
+            'id': 11,
+            'source': 'MSF Clinical guidelines',
+            'tier': 2,
+            'page': 120,
+            'heading': 'MSF Clinical guidelines › Typhoid fever › Treatment',
+            'excerpt': 'Azithromycin PO for 7 days...',
+            'section': 'treatment',
           },
         ],
       }); // fmt: skip
@@ -489,7 +532,7 @@ void main() {
     expect(find.text('Patient sessions, last 7 days'), findsOneWidget);
     expect(find.text('5 rows waiting to copy'), findsOneWidget);
     expect(
-      find.text('2,667 diseases, 6,732 symptoms, 3,067 drugs'),
+      find.text('73,739 symptoms, 21,790 diseases, 3,384 medications'),
       findsOneWidget,
     );
     expect(find.text('model is down'), findsOneWidget);
@@ -629,16 +672,38 @@ void main() {
     expect(home.onPressed, isNull); // already home
   });
 
-  testWidgets('database: review a run, approve it, then load it', (
+  testWidgets('database: live numbers, sources, and approving an upload', (
     tester,
   ) async {
     final server = await pumpAdmin(tester);
     await signIn(tester);
     await openPage(tester, 'database');
 
-    expect(find.text('161,741'), findsOneWidget);
-    expect(find.text('Asthma'), findsOneWidget);
+    // Four numbers, counted from the knowledge database.
+    expect(find.text('73,739'), findsOneWidget);
+    expect(find.text('21,790'), findsOneWidget);
+    expect(find.text('3,384'), findsOneWidget);
+    expect(find.text('596'), findsOneWidget);
+    for (final gone in [
+      'Guideline passages',
+      'Sources',
+      'Printed doses',
+      'Quarantined',
+    ]) {
+      expect(find.text(gone), findsNothing);
+    }
+    expect(
+      find.textContaining('Live from the knowledge database'),
+      findsNothing,
+    );
+    expect(find.text('Uploaded files'), findsOneWidget);
+    // Raw passages are not shown to operators.
+    expect(find.text('Browse the knowledge'), findsNothing);
     expect(find.text('Waiting for approval'), findsOneWidget);
+    expect(
+      server.requests,
+      isNot(contains('GET /api/admin/knowledge/diseases')),
+    );
 
     await tester.tap(find.text('mystery_file.csv'));
     await tester.pumpAndSettle();
@@ -648,19 +713,55 @@ void main() {
       ),
       findsOneWidget,
     );
-    await tester.tap(find.text('Approve'));
+    await tester.tap(find.text('Approve and load'));
     await tester.pumpAndSettle();
-    expect(find.text('Approved'), findsOneWidget);
-
-    await tester.tap(find.text('mystery_file.csv'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Load into database'));
-    await tester.pumpAndSettle();
-    expect(find.text('Loaded'), findsOneWidget);
-    expect(find.text('Added 2 diseases, 3 symptoms, 4 links'), findsOneWidget);
+    expect(find.widgetWithText(Pill, 'Loaded'), findsOneWidget);
+    expect(
+      find.text('2 diseases, 3 symptoms, 4 symptom links'),
+      findsOneWidget,
+    );
     expect(
       server.requests,
-      contains('POST /api/admin/knowledge/ingest/runs/7/load'),
+      contains('POST /api/admin/knowledge/uploads/7/approve'),
     );
+
+    // The numbers count again by themselves.
+    final before = server.requests
+        .where((r) => r == 'GET /api/admin/knowledge/summary')
+        .length;
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pumpAndSettle();
+    expect(
+      server.requests
+          .where((r) => r == 'GET /api/admin/knowledge/summary')
+          .length,
+      greaterThan(before),
+    );
+  });
+
+  testWidgets('database: while the knowledge database is down', (tester) async {
+    final server = await pumpAdmin(tester);
+    server.knowledgeReachable = false;
+    await signIn(tester);
+    await openPage(tester, 'database');
+
+    // The last numbers stay visible, saying when they were counted.
+    expect(find.text('73,739'), findsOneWidget);
+    expect(find.textContaining('cannot be reached right now'), findsWidgets);
+    final upload = tester.widget<ButtonStyleButton>(
+      find.byKey(const Key('knowledge-upload')),
+    );
+    expect(upload.onPressed, isNull);
+    expect(
+      server.requests,
+      isNot(contains('GET /api/admin/knowledge/uploads')),
+    );
+
+    // Back on: the page notices by itself.
+    server.knowledgeReachable = true;
+    await tester.pump(const Duration(seconds: 16));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('cannot be reached'), findsNothing);
+    expect(find.text('mystery_file.csv'), findsOneWidget);
   });
 }

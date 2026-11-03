@@ -10,7 +10,16 @@ import 'admin_widgets.dart';
 
 const _base = '/api/admin/knowledge';
 
-/// The medical knowledge database: what is in it, and how files get in.
+/// How often the numbers are counted again while the tab is open, and how
+/// often while a file is being worked on.
+const _refreshEvery = Duration(seconds: 15);
+const _refreshWhileWorking = Duration(seconds: 4);
+
+const _busyStates = {'waiting', 'reading', 'loading'};
+
+/// The medical knowledge database (MEDORA_KNOWLEDGE_DATABASE_URL): what it
+/// holds, counted live; the files uploaded into it; and browsing it. The app
+/// database holds no medical knowledge.
 class KnowledgeTab extends StatefulWidget {
   const KnowledgeTab({super.key, required this.admin});
 
@@ -22,67 +31,100 @@ class KnowledgeTab extends StatefulWidget {
 
 class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
   Map<String, dynamic>? _summary;
-  List<dynamic> _runs = [];
+  List<dynamic> _uploads = [];
+  String? _uploadsProblem;
 
-  // Browse state.
-  String _table = 'diseases';
-  String _query = '';
-  int _offset = 0;
-  int _total = 0;
-  List<dynamic> _items = [];
-  Timer? _searchDebounce;
   String? _uploading;
 
-  static const _pageSize = 25;
+  Timer? _refresh;
+  bool _refreshing = false;
+
+  bool get _reachable => _summary?['reachable'] == true;
+
+  bool get _working =>
+      _uploads.any((u) => _busyStates.contains((u as Map)['status']));
 
   @override
   void dispose() {
-    _searchDebounce?.cancel();
+    _refresh?.cancel();
     super.dispose();
   }
 
   @override
   Future<void> load() async {
     _summary = await widget.admin.get('$_base/summary') as Map<String, dynamic>;
-    if (_summary!['ready'] != true) return;
-    final results = await Future.wait([
-      widget.admin.get('$_base/ingest/runs'),
-      widget.admin.get(
-        '$_base/$_table',
-        query: {'q': _query, 'limit': '$_pageSize', 'offset': '$_offset'},
-      ),
-    ]);
-    _runs = results[0] as List;
-    final page = results[1] as Map<String, dynamic>;
-    _total = page['total'] as int;
-    _items = page['items'] as List;
+    if (!_reachable) {
+      // The lists come from the database too; keep what was shown.
+      _uploadsProblem = _summary!['configured'] == true
+          ? 'The knowledge database cannot be reached right now.'
+          : 'The knowledge database is not set up on this server.';
+      _schedule();
+      return;
+    }
+    try {
+      _uploads = await widget.admin.get('$_base/uploads') as List;
+      _uploadsProblem = null;
+    } on ApiException catch (e) {
+      _uploadsProblem = e.message;
+    }
+    _schedule();
   }
 
-  void _browse({String? table, String? query, int? offset}) {
-    _table = table ?? _table;
-    _query = query ?? _query;
-    _offset = offset ?? 0;
-    run(() async {});
+  /// Counts again by itself: often while a file is being worked on.
+  void _schedule() {
+    _refresh?.cancel();
+    if (!mounted) return;
+    _refresh = Timer(
+      _working ? _refreshWhileWorking : _refreshEvery,
+      _quietRefresh,
+    );
   }
+
+  Future<void> _quietRefresh() async {
+    if (!mounted || busy || _refreshing) {
+      _schedule();
+      return;
+    }
+    _refreshing = true;
+    try {
+      await load();
+    } on ApiException {
+      _schedule();
+    } finally {
+      _refreshing = false;
+    }
+    if (mounted) setState(() {});
+  }
+
+  // --- uploads ---------------------------------------------------------------
 
   Future<void> _upload() async {
     final picked = await FilePicker.pickFiles();
-    if (picked.isEmpty) return;
+    if (picked.isEmpty || !mounted) return;
+    final choices =
+        (_summary?['choices'] as Map?)?.cast<String, dynamic>() ?? const {};
     final problems = <String>[];
     await run(() async {
       for (final (i, file) in picked.indexed) {
+        if (!mounted) return;
+        final details = await showDialog<Map<String, String>>(
+          context: context,
+          builder: (context) =>
+              _UploadDetailsDialog(filename: file.name, choices: choices),
+        );
+        if (details == null) continue;
         setState(
           () => _uploading =
-              'Uploading and planning ${i + 1} of ${picked.length}: '
-              '${file.name}',
+              'Uploading ${i + 1} of ${picked.length}: ${file.name}',
         );
         try {
           final bytes = await file.readAsBytes();
           await widget.admin.upload(
-            '$_base/ingest/upload',
+            '$_base/uploads',
             filename: file.name,
             bytes: Stream.value(bytes),
             length: bytes.length,
+            query: details,
           );
         } on ApiException catch (e) {
           problems.add('${file.name}: ${e.message}');
@@ -96,21 +138,21 @@ class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
     });
   }
 
-  Future<void> _act(int runId, String action, {String? text}) => run(
+  Future<void> _act(int id, String action, {String? text}) => run(
     () => widget.admin.send(
       'POST',
-      '$_base/ingest/runs/$runId/$action',
+      '$_base/uploads/$id/$action',
       body: text == null ? null : {'text': text},
-      // Loading a large file, or re-planning with the AI, takes a while.
+      // Re-planning with the AI, or saving the offline copy, takes a while.
       timeout: const Duration(minutes: 10),
     ),
   );
 
-  Future<void> _openRun(Map<String, dynamic> run) async {
+  Future<void> _openUpload(Map<String, dynamic> upload) async {
     final Map<String, dynamic> detail;
     try {
       detail =
-          await widget.admin.get('$_base/ingest/runs/${run['id']}')
+          await widget.admin.get('$_base/uploads/${upload['id']}')
               as Map<String, dynamic>;
     } on ApiException catch (e) {
       setState(() => error = e.message);
@@ -119,7 +161,7 @@ class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
     if (!mounted) return;
     final action = await showDialog<String>(
       context: context,
-      builder: (context) => _RunDialog(run: detail),
+      builder: (context) => _UploadDialog(upload: detail, switches: _switches),
     );
     if (action == null || !mounted) return;
     String? text;
@@ -132,102 +174,76 @@ class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
             : 'What should the AI change?',
         hint: action == 'reject'
             ? null
-            : 'For example: only add aliases to existing drugs, '
+            : 'For example: only add other names to existing drugs, '
                   'do not create new ones',
         confirm: action == 'reject' ? 'Reject' : 'Revise',
       );
       if (text == null) return;
     }
-    await _act(run['id'] as int, action, text: text);
+    if (action == 'remove' && mounted) {
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove from the knowledge database?'),
+          content: Text(
+            'Everything read from ${detail['filename']} is taken out of the '
+            'knowledge database, and reports stop using it.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: MedoraColors.danger,
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Remove'),
+            ),
+          ],
+        ),
+      );
+      if (sure != true) return;
+    }
+    await _act(upload['id'] as int, action, text: text);
   }
 
-  Future<void> _openDisease(int id) async {
-    final Map<String, dynamic> d;
-    try {
-      d = await widget.admin.get('$_base/diseases/$id') as Map<String, dynamic>;
-    } on ApiException catch (e) {
-      setState(() => error = e.message);
-      return;
-    }
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => _DiseaseDialog(disease: d),
-    );
-  }
+  Map<String, dynamic> get _switches =>
+      (_summary?['switches'] as Map?)?.cast<String, dynamic>() ?? const {};
+
+  // --- page ------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final s = _summary;
     if (s == null) return Column(children: statusWidgets());
-    if (s['ready'] != true) return _notReady(s);
+    final totals = (s['totals'] as Map?)?.cast<String, dynamic>();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ...statusWidgets(),
-        TileGrid(
-          minTileWidth: 170,
-          children: [
-            StatTile('Diseases', formatCount(s['diseases'] as int)),
-            StatTile('Symptoms', formatCount(s['symptoms'] as int)),
-            StatTile('Drugs', formatCount(s['drugs'] as int)),
-            StatTile(
-              'Disease–symptom links',
-              formatCount(s['symptomLinks'] as int),
-            ),
-            StatTile('Disease–drug links', formatCount(s['drugLinks'] as int)),
-            StatTile('Precautions', formatCount(s['precautions'] as int)),
-          ],
-        ),
-        const SizedBox(height: 20),
-        _ingestion(),
-        const SizedBox(height: 20),
-        _browser(),
+        if (!_reachable) ...[
+          _Connection(summary: s),
+          const SizedBox(height: 16),
+        ],
+        if (totals != null) ...[
+          _Numbers(totals: totals),
+          const SizedBox(height: 24),
+        ],
+        _uploadSection(),
       ],
     );
   }
 
-  Widget _notReady(Map<String, dynamic> s) {
-    final legacy = (s['legacyTables'] as List).cast<String>();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ...statusWidgets(),
-        Section(
-          title: 'Medical knowledge',
-          subtitle: legacy.isEmpty
-              ? 'The knowledge tables have not been created in this database.'
-              : 'This database has knowledge tables in an older layout '
-                    '(${legacy.join(', ')}). Replacing them is done from the '
-                    'command line, so it cannot happen by accident.',
-          child: legacy.isEmpty
-              ? Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: busy
-                        ? null
-                        : () => run(
-                            () => widget.admin.send('POST', '$_base/init'),
-                          ),
-                    child: const Text('Create the tables'),
-                  ),
-                )
-              : const SizedBox.shrink(),
-        ),
-      ],
-    );
-  }
-
-  Widget _ingestion() {
+  Widget _uploadSection() {
     return Section(
-      title: 'Data ingestion',
-      subtitle:
-          'Upload a file in any format. The AI works out what it contains and '
-          'proposes how to load it; nothing is loaded until you approve.',
+      title: 'Uploaded files',
       actions: [
         FilledButton.icon(
-          onPressed: busy ? null : _upload,
+          key: const Key('knowledge-upload'),
+          onPressed: busy || !_reachable ? null : _upload,
           icon: const Icon(Icons.upload_file),
           label: const Text('Upload files'),
         ),
@@ -243,26 +259,36 @@ class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
             ),
             const SizedBox(height: 12),
           ],
-          _runs.isEmpty
-              ? const EmptyNote('No files have been ingested yet.')
+          if (_uploadsProblem != null) ...[
+            MedoraNotice(
+              icon: Icons.cloud_off_outlined,
+              message: _uploadsProblem!,
+            ),
+            const SizedBox(height: 12),
+          ],
+          _uploads.isEmpty
+              ? const EmptyNote('No files uploaded yet.')
               : ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 420),
                   child: SingleChildScrollView(
                     child: AdminTable(
-                      onTap: (i) => _openRun(_runs[i] as Map<String, dynamic>),
-                      columns: const ['File', 'Status', 'What it is', 'Result'],
+                      onTap: (i) =>
+                          _openUpload(_uploads[i] as Map<String, dynamic>),
+                      columns: const [
+                        'File',
+                        'Status',
+                        'What it is',
+                        'Result',
+                        'Reports',
+                      ],
                       rows: [
-                        for (final r in _runs)
+                        for (final u in _uploads.cast<Map<String, dynamic>>())
                           [
-                            Clipped(r['filename'] as String, width: 230),
-                            _StatusPill(r as Map<String, dynamic>),
-                            Clipped(
-                              (r['summary'] as String).isNotEmpty
-                                  ? r['summary'] as String
-                                  : r['note'] as String,
-                              width: 360,
-                            ),
-                            Text(_result(r)),
+                            Clipped(u['filename'] as String, width: 220),
+                            UploadStatusPill(u),
+                            Clipped(_about(u), width: 320),
+                            Text(uploadResult(u)),
+                            Text(_inReports(u, _switches)),
                           ],
                       ],
                     ),
@@ -273,142 +299,148 @@ class _KnowledgeTabState extends State<KnowledgeTab> with Loader {
     );
   }
 
-  static String _result(Map<String, dynamic> run) {
-    final loaded = run['loaded'] as Map<String, dynamic>?;
-    if (loaded != null && run['status'] == 'loaded') {
-      final parts = <String>[
-        for (final table in const ['diseases', 'symptoms', 'drugs'])
-          if ((loaded[table]?['created'] ?? 0) > 0)
-            '${formatCount(loaded[table]['created'] as int)} $table',
-        if ((loaded['links']?['created'] ?? 0) > 0)
-          '${formatCount(loaded['links']['created'] as int)} links',
-        if ((loaded['precautions']?['created'] ?? 0) > 0)
-          '${formatCount(loaded['precautions']['created'] as int)} precautions',
-      ];
-      return parts.isEmpty
-          ? 'Enriched existing rows'
-          : 'Added ${parts.join(', ')}';
+  static String _about(Map<String, dynamic> u) {
+    if (_busyStates.contains(u['status']) &&
+        (u['stage'] as String).isNotEmpty) {
+      return u['stage'] as String;
+    }
+    for (final key in const ['summary', 'title', 'note']) {
+      final value = u[key] as String? ?? '';
+      if (value.isNotEmpty) return value;
     }
     return '';
   }
+}
 
-  Widget _browser() {
-    final last = (_offset + _items.length);
-    return Section(
-      title: 'Browse the knowledge',
-      actions: [
-        SegmentedButton<String>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: 'diseases', label: Text('Diseases')),
-            ButtonSegment(value: 'symptoms', label: Text('Symptoms')),
-            ButtonSegment(value: 'drugs', label: Text('Drugs')),
-          ],
-          selected: {_table},
-          onSelectionChanged: (s) => _browse(table: s.first, query: ''),
-        ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextField(
-            key: ValueKey(_table),
-            decoration: const InputDecoration(
-              labelText: 'Search by name or alias',
-              prefixIcon: Icon(Icons.search),
-            ),
-            onChanged: (value) {
-              _searchDebounce?.cancel();
-              _searchDebounce = Timer(
-                const Duration(milliseconds: 350),
-                () => _browse(query: value),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          _items.isEmpty
-              ? const EmptyNote('Nothing matches.')
-              : AdminTable(
-                  onTap: _table == 'diseases'
-                      ? (i) => _openDisease(_items[i]['id'] as int)
-                      : null,
-                  columns: [
-                    'Name',
-                    'Also known as',
-                    _table == 'diseases' ? 'Links' : 'Diseases',
-                    switch (_table) {
-                      'drugs' => 'Used for',
-                      _ => 'Description',
-                    },
-                  ],
-                  rows: [
-                    for (final item in _items)
-                      [
-                        Clipped(item['name'] as String, width: 240),
-                        Clipped(
-                          (item['aliases'] as List).join(', '),
-                          width: 220,
-                        ),
-                        Text(formatCount(item['links'] as int)),
-                        Clipped(
-                          (item[_table == 'drugs' ? 'uses' : 'description'] ??
-                                  '')
-                              as String,
-                          width: 380,
-                        ),
-                      ],
-                  ],
-                ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Text(
-                _total == 0
-                    ? ''
-                    : '${formatCount(_offset + 1)}–${formatCount(last)} '
-                          'of ${formatCount(_total)}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              IconButton(
-                tooltip: 'Previous page',
-                onPressed: busy || _offset == 0
-                    ? null
-                    : () => _browse(offset: _offset - _pageSize),
-                icon: const Icon(Icons.chevron_left),
-              ),
-              IconButton(
-                tooltip: 'Next page',
-                onPressed: busy || last >= _total
-                    ? null
-                    : () => _browse(offset: _offset + _pageSize),
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
-        ],
-      ),
+/// Shown only when the knowledge database cannot be reached.
+class _Connection extends StatelessWidget {
+  const _Connection({required this.summary});
+
+  final Map<String, dynamic> summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final counted = summary['countedAt'] as String? ?? '';
+    return MedoraNotice(
+      key: const Key('knowledge-connection'),
+      icon: Icons.cloud_off_outlined,
+      color: MedoraColors.warning,
+      message: summary['configured'] != true
+          ? 'The knowledge database is not set up on this server.'
+          : 'The knowledge database cannot be reached right now'
+                '${counted.isEmpty ? '.' : '. Numbers as of ${formatDate(counted)}.'}',
     );
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill(this.run);
+class _Numbers extends StatelessWidget {
+  const _Numbers({required this.totals});
 
-  final Map<String, dynamic> run;
+  final Map<String, dynamic> totals;
+
+  // A number the server did not send shows as a dash, never a false 0.
+  String n(String key) =>
+      totals[key] is num ? formatCount(totals[key] as num) : '–';
 
   @override
   Widget build(BuildContext context) {
-    final review = (run['needsReview'] as List).isNotEmpty;
-    final (label, color) = switch (run['status']) {
+    return TileGrid(
+      minTileWidth: 220,
+      children: [
+        KpiCard(
+          key: const Key('knowledge-symptoms'),
+          icon: Icons.sick_outlined,
+          color: MedoraColors.accent,
+          label: 'Symptoms',
+          value: n('symptoms'),
+        ),
+        KpiCard(
+          key: const Key('knowledge-diseases'),
+          icon: Icons.coronavirus_outlined,
+          color: MedoraColors.primary,
+          label: 'Diseases',
+          value: n('diseases'),
+        ),
+        KpiCard(
+          key: const Key('knowledge-medications'),
+          icon: Icons.medication_outlined,
+          color: MedoraColors.teal,
+          label: 'Medications',
+          value: n('medications'),
+        ),
+        KpiCard(
+          key: const Key('knowledge-precautions'),
+          icon: Icons.health_and_safety_outlined,
+          color: MedoraColors.warning,
+          label: 'Precautions',
+          value: n('precautions'),
+        ),
+      ],
+    );
+  }
+}
+
+String _tierName(int tier) => switch (tier) {
+  1 => 'Indian government',
+  2 => 'WHO / international',
+  3 => 'Other reference',
+  4 => 'Vocabulary',
+  _ => 'Community',
+};
+
+String _inReports(Map<String, dynamic> u, Map<String, dynamic> switches) {
+  if (u['status'] != 'loaded') return '–';
+  if (u['reports'] == true) return 'Yes';
+  final tier = u['tier'] as int? ?? 5;
+  if (tier <= 4 && switches['testing'] == true) return 'Testing only';
+  if (tier == 5 && switches['community'] == true) return 'Testing only';
+  return 'No';
+}
+
+/// What came of an upload, in a few words.
+String uploadResult(Map<String, dynamic> u) {
+  final loaded = (u['loaded'] as Map?)?.cast<String, dynamic>();
+  if (loaded == null || u['status'] != 'loaded') return '';
+  int count(String key) => (loaded[key] as num?)?.toInt() ?? 0;
+  if (u['kind'] == 'pdf') {
+    final quarantined = count('quarantined');
+    return '${formatCount(count('kb_chunks'))} passages'
+        '${quarantined > 0 ? ', ${formatCount(quarantined)} quarantined' : ''}';
+  }
+  final parts = [
+    for (final (key, label) in const [
+      ('diseases', 'diseases'),
+      ('symptoms', 'symptoms'),
+      ('drugs', 'medicines'),
+      ('symptom links', 'symptom links'),
+      ('drug links', 'medicine links'),
+      ('precautions', 'precautions'),
+      ('enriched names', 'enriched names'),
+    ])
+      if (count(key) > 0) '${formatCount(count(key))} $label',
+  ];
+  return parts.isEmpty ? 'Nothing new' : parts.join(', ');
+}
+
+class UploadStatusPill extends StatelessWidget {
+  const UploadStatusPill(this.upload, {super.key});
+
+  final Map<String, dynamic> upload;
+
+  @override
+  Widget build(BuildContext context) {
+    final review = (upload['needsReview'] as List? ?? const []).isNotEmpty;
+    final (label, color) = switch (upload['status']) {
+      'waiting' => ('Waiting', MedoraColors.primary),
+      'reading' => ('Reading', MedoraColors.primary),
+      'loading' => ('Loading', MedoraColors.primary),
       'planned' when review => ('Needs review', MedoraColors.warning),
       'planned' => ('Waiting for approval', MedoraColors.primary),
-      'approved' => ('Approved', MedoraColors.primary),
       'loaded' => ('Loaded', MedoraColors.teal),
       'failed' => ('Failed', MedoraColors.danger),
-      'undone' => ('Undone', MedoraColors.muted),
+      'removed' => ('Removed', MedoraColors.muted),
       _ => (
-        run['verdict'] == 'not_data' ? 'Not data' : 'Skipped',
+        upload['verdict'] == 'not_data' ? 'Not data' : 'Skipped',
         MedoraColors.muted,
       ),
     };
@@ -416,11 +448,170 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
-/// One ingestion run: the AI's plan, what it would do, and what to do next.
-class _RunDialog extends StatelessWidget {
-  const _RunDialog({required this.run});
+/// What the person uploading says about a file: who publishes it, its
+/// licence, and whether reports may use it.
+class _UploadDetailsDialog extends StatefulWidget {
+  const _UploadDetailsDialog({required this.filename, required this.choices});
 
-  final Map<String, dynamic> run;
+  final String filename;
+  final Map<String, dynamic> choices;
+
+  @override
+  State<_UploadDetailsDialog> createState() => _UploadDetailsDialogState();
+}
+
+class _UploadDetailsDialogState extends State<_UploadDetailsDialog> {
+  late final bool _pdf = widget.filename.toLowerCase().endsWith('.pdf');
+  late final _title = TextEditingController(
+    text: widget.filename
+        .replaceAll(RegExp(r'\.[A-Za-z0-9]+$'), '')
+        .replaceAll(RegExp(r'[_-]+'), ' '),
+  );
+  final _publisher = TextEditingController();
+  final _licence = TextEditingController();
+  late String _tier = _pdf ? '1' : '5';
+  String _kind = 'guideline';
+  // A data file or article is approved by a person before it loads; a PDF
+  // loads at once, so its use in reports is a deliberate choice.
+  late bool _reports = !_pdf;
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _publisher.dispose();
+    _licence.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tiers =
+        (widget.choices['tiers'] as Map?)?.cast<String, dynamic>() ??
+        const {
+          '1': 'Indian government',
+          '2': 'WHO or international body',
+          '3': 'Other reference',
+          '5': 'Community dataset',
+        };
+    final kinds =
+        (widget.choices['documentKinds'] as Map?)?.cast<String, dynamic>() ??
+        const {
+          'guideline': 'Clinical guideline',
+          'formulary': 'Drug book (formulary)',
+          'patient_info': 'Patient information',
+        };
+    return AlertDialog(
+      title: Text(widget.filename),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                key: const Key('upload-title'),
+                controller: _title,
+                decoration: const InputDecoration(labelText: 'Title'),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('upload-publisher'),
+                controller: _publisher,
+                decoration: const InputDecoration(
+                  labelText: 'Publisher',
+                  hintText: 'For example: ICMR, NCDC, WHO',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('upload-licence'),
+                controller: _licence,
+                decoration: const InputDecoration(
+                  labelText: 'Licence or permission',
+                  hintText: 'For example: Government of India publication',
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: const Key('upload-tier'),
+                initialValue: tiers.containsKey(_tier)
+                    ? _tier
+                    : tiers.keys.first,
+                decoration: const InputDecoration(
+                  labelText: 'Who publishes it',
+                ),
+                items: [
+                  for (final e in tiers.entries)
+                    DropdownMenuItem(
+                      value: e.key,
+                      child: Text(e.value as String),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _tier = v ?? _tier),
+              ),
+              if (_pdf) ...[
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const Key('upload-kind'),
+                  initialValue: _kind,
+                  decoration: const InputDecoration(
+                    labelText: 'What kind of document',
+                  ),
+                  items: [
+                    for (final e in kinds.entries)
+                      DropdownMenuItem(
+                        value: e.key,
+                        child: Text(e.value as String),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _kind = v ?? _kind),
+                ),
+              ],
+              const SizedBox(height: 8),
+              SwitchListTile(
+                key: const Key('upload-reports'),
+                contentPadding: EdgeInsets.zero,
+                value: _reports,
+                onChanged: (v) => setState(() => _reports = v),
+                title: const Text('Reports may use it'),
+                subtitle: const Text(
+                  'Only when the licence allows it. You can change this '
+                  'later from the file.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Skip this file'),
+        ),
+        FilledButton(
+          key: const Key('upload-confirm'),
+          onPressed: () => Navigator.pop(context, {
+            'title': _title.text.trim(),
+            'publisher': _publisher.text.trim(),
+            'licence': _licence.text.trim(),
+            'tier': _tier,
+            if (_pdf) 'kind': _kind,
+            'reports': '$_reports',
+          }),
+          child: const Text('Upload'),
+        ),
+      ],
+    );
+  }
+}
+
+/// One upload: what was found, what it would do, and what to do next.
+class _UploadDialog extends StatelessWidget {
+  const _UploadDialog({required this.upload, required this.switches});
+
+  final Map<String, dynamic> upload;
+  final Map<String, dynamic> switches;
 
   static String _col(Map? col) {
     if (col == null) return '';
@@ -435,10 +626,10 @@ class _RunDialog extends StatelessWidget {
             .map((e) => '${e.key} ← ${_col(e.value as Map)}')
             .join(', ');
         final mode = o['mode'] == 'enrich_only'
-            ? 'Enrich existing ${o['table']} only'
+            ? 'Add other names to existing ${o['table']} only'
             : 'Add ${o['table']}';
         return '$mode: name ← ${_col(o['name'] as Map)}'
-            '${o['aliases'] == null ? '' : ', aliases ← ${_col(o['aliases'] as Map)}'}'
+            '${o['aliases'] == null ? '' : ', other names ← ${_col(o['aliases'] as Map)}'}'
             '${fields.isEmpty ? '' : ', $fields'}';
       case 'link':
         final target = o['symptom'] != null ? 'symptom' : 'drug';
@@ -453,15 +644,14 @@ class _RunDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final status = run['status'] as String;
-    final stats =
-        (run['loaded'] == null ? run['preview'] : null)
-            as Map<String, dynamic>?;
-    final review = (run['needsReview'] as List).cast<String>();
-    final outputs = (run['outputs'] as List).cast<Map<String, dynamic>>();
-    final rejects = (run['rejects'] as List).cast<Map<String, dynamic>>();
-    final dropped = (run['droppedNotInArticle'] as List).cast<String>();
-    final usable = run['verdict'] == 'usable';
+    final status = upload['status'] as String;
+    final kind = upload['kind'] as String;
+    final preview = upload['preview'] as Map<String, dynamic>?;
+    final review = (upload['needsReview'] as List).cast<String>();
+    final outputs = (upload['outputs'] as List).cast<Map<String, dynamic>>();
+    final dropped = (upload['droppedNotInArticle'] as List).cast<String>();
+    final working = _busyStates.contains(status);
+    final result = uploadResult(upload);
 
     Widget heading(String label) => Padding(
       padding: const EdgeInsets.only(top: 16, bottom: 6),
@@ -469,7 +659,7 @@ class _RunDialog extends StatelessWidget {
     );
 
     return AlertDialog(
-      title: Text(run['filename'] as String),
+      title: Text(upload['filename'] as String),
       content: SizedBox(
         width: 640,
         child: SingleChildScrollView(
@@ -482,36 +672,59 @@ class _RunDialog extends StatelessWidget {
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  _StatusPill(run),
+                  UploadStatusPill(upload),
                   Text(
-                    '${formatBytes(run['sizeBytes'] as int)}  ·  '
-                    'AI confidence ${((run['confidence'] as num) * 100).round()}%',
+                    '${switch (kind) {
+                      'pdf' => 'PDF',
+                      'records' => 'Data file',
+                      _ => 'Article',
+                    }}  ·  ${formatBytes(upload['sizeBytes'] as int)}  ·  '
+                    '${_tierName(upload['tier'] as int? ?? 5)}  ·  '
+                    'In reports: ${_inReports(upload, switches)}',
                     style: text.bodyMedium,
                   ),
                 ],
               ),
-              if ((run['note'] as String).isNotEmpty) ...[
+              if (working && (upload['stage'] as String).isNotEmpty) ...[
+                const SizedBox(height: 12),
+                MedoraNotice(
+                  icon: Icons.hourglass_top,
+                  message: upload['stage'] as String,
+                  color: MedoraColors.primary,
+                ),
+              ],
+              if ((upload['note'] as String).isNotEmpty) ...[
                 const SizedBox(height: 12),
                 MedoraNotice(
                   icon: Icons.info_outline,
-                  message: run['note'] as String,
+                  message: upload['note'] as String,
                 ),
               ],
               for (final r in review) ...[
                 const SizedBox(height: 12),
                 MedoraNotice(icon: Icons.flag_outlined, message: r),
               ],
-              heading('What the AI found'),
-              Text(run['summary'] as String),
-              if ((run['reason'] as String).isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(run['reason'] as String, style: text.bodyMedium),
+              heading('About the file'),
+              Text(upload['title'] as String),
+              Text(
+                'Publisher: ${upload['publisher']}  ·  '
+                'Licence: ${(upload['licence'] as String?)?.isNotEmpty == true ? upload['licence'] : 'Not stated'}',
+                style: text.bodyMedium,
+              ),
+              if ((upload['summary'] as String).isNotEmpty) ...[
+                heading('What the AI found'),
+                Text(upload['summary'] as String),
+                if ((upload['reason'] as String? ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(upload['reason'] as String, style: text.bodyMedium),
+                ],
               ],
-              if (run['content'] == 'article') ...[
+              if (upload['content'] == 'article') ...[
                 heading('How it will be loaded'),
                 const Text(
                   'An article about one disease: the AI extracted its '
-                  'description, causes, symptoms, drugs and precautions.',
+                  'description, causes, symptoms, medicines and precautions; '
+                  'every name was checked against the text.',
                 ),
               ] else if (outputs.isNotEmpty) ...[
                 heading('How it will be loaded'),
@@ -521,33 +734,27 @@ class _RunDialog extends StatelessWidget {
                     child: Text('•  ${_mapping(o)}'),
                   ),
               ],
-              if (stats != null) ...[
+              if (preview != null && status != 'loaded') ...[
                 heading(
-                  'Preview (first ${formatCount(stats['records'] as int)} records)',
+                  'Preview (first ${formatCount(preview['records'] as int)} records)',
                 ),
                 Text(
-                  '${formatCount(stats['diseases'] as int)} diseases, '
-                  '${formatCount(stats['symptoms'] as int)} symptoms, '
-                  '${formatCount(stats['drugs'] as int)} drugs, '
-                  '${formatCount(stats['links'] as int)} links, '
-                  '${formatCount(stats['precautions'] as int)} precautions. '
-                  '${((stats['reject_rate'] as num) * 100).toStringAsFixed(1)}% '
-                  'of values refused by validation.',
+                  '${formatCount(preview['diseases'] as int)} diseases, '
+                  '${formatCount(preview['symptoms'] as int)} symptoms, '
+                  '${formatCount(preview['drugs'] as int)} medicines, '
+                  '${formatCount(preview['links'] as int)} links, '
+                  '${formatCount(preview['precautions'] as int)} precautions. '
+                  '${((preview['reject_rate'] as num) * 100).toStringAsFixed(1)}% '
+                  'of values refused by the checks.',
                 ),
               ],
               if (dropped.isNotEmpty) ...[
                 heading('Dropped: not found in the article'),
                 Text(dropped.join('; '), style: text.bodyMedium),
               ],
-              if (rejects.isNotEmpty) ...[
-                heading('Sample of refused values'),
-                for (final r in rejects.take(12))
-                  Text(
-                    '${r['reason']}: ${r['value']}',
-                    style: text.bodyMedium?.copyWith(fontSize: 13),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+              if (result.isNotEmpty) ...[
+                heading('Loaded into the knowledge database'),
+                Text(result),
               ],
             ],
           ),
@@ -558,7 +765,7 @@ class _RunDialog extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
         ),
-        if (status != 'loaded')
+        if (status == 'planned')
           TextButton(
             onPressed: () => Navigator.pop(context, 'reject'),
             child: const Text(
@@ -566,86 +773,42 @@ class _RunDialog extends StatelessWidget {
               style: TextStyle(color: MedoraColors.danger),
             ),
           ),
-        if (status != 'loaded' && run['content'] != 'article')
+        if (kind == 'records' &&
+            const {'planned', 'skipped', 'failed'}.contains(status))
           TextButton(
             onPressed: () => Navigator.pop(context, 'revise'),
             child: const Text('Revise plan'),
           ),
-        if (usable && const {'planned', 'failed', 'undone'}.contains(status))
-          FilledButton(
-            onPressed: () => Navigator.pop(context, 'approve'),
-            child: const Text('Approve'),
-          ),
-        if (status == 'approved')
-          FilledButton(
-            onPressed: () => Navigator.pop(context, 'load'),
-            child: const Text('Load into database'),
+        if (const {'failed', 'skipped'}.contains(status))
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'retry'),
+            child: const Text('Try again'),
           ),
         if (status == 'loaded')
           TextButton(
-            onPressed: () => Navigator.pop(context, 'undo'),
+            onPressed: () => Navigator.pop(
+              context,
+              upload['reports'] == true ? 'block' : 'allow',
+            ),
+            child: Text(
+              upload['reports'] == true
+                  ? 'Stop using in reports'
+                  : 'Allow in reports',
+            ),
+          ),
+        if (const {'loaded', 'failed'}.contains(status))
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'remove'),
             child: const Text(
-              'Undo this load',
+              'Remove from database',
               style: TextStyle(color: MedoraColors.danger),
             ),
           ),
-      ],
-    );
-  }
-}
-
-class _DiseaseDialog extends StatelessWidget {
-  const _DiseaseDialog({required this.disease});
-
-  final Map<String, dynamic> disease;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-
-    List<Widget> block(String label, String body) => body.isEmpty
-        ? const []
-        : [
-            Padding(
-              padding: const EdgeInsets.only(top: 14, bottom: 4),
-              child: Text(label, style: text.titleMedium),
-            ),
-            Text(body),
-          ];
-
-    final symptoms = (disease['symptoms'] as List).cast<String>();
-    final drugs = (disease['drugs'] as List).cast<String>();
-    final precautions = (disease['precautions'] as List).cast<String>();
-    return AlertDialog(
-      title: Text(disease['name'] as String),
-      content: SizedBox(
-        width: 640,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ...block(
-                'Also known as',
-                (disease['aliases'] as List).join(', '),
-              ),
-              ...block('Description', disease['description'] as String),
-              ...block('Causes', disease['causes'] as String),
-              ...block('Symptoms (${symptoms.length})', symptoms.join(', ')),
-              ...block('Drugs (${drugs.length})', drugs.join(', ')),
-              ...block(
-                'Precautions (${precautions.length})',
-                precautions.map((p) => '•  $p').join('\n'),
-              ),
-            ],
+        if (status == 'planned')
+          FilledButton(
+            onPressed: () => Navigator.pop(context, 'approve'),
+            child: const Text('Approve and load'),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Close'),
-        ),
       ],
     );
   }

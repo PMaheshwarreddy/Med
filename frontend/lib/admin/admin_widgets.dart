@@ -41,12 +41,14 @@ class AdminApi {
     required String filename,
     required Stream<List<int>> bytes,
     required int length,
+    Map<String, String>? query,
   }) => _api.adminUpload(
     _key,
     path,
     filename: filename,
     bytes: bytes,
     length: length,
+    query: query,
   );
 }
 

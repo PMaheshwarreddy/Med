@@ -92,6 +92,9 @@ abstract class S {
   String get stepReview;
   String get stepReport;
   String get startOver;
+  String get home;
+  String get leaveVisitTitle;
+  String get leaveVisitBody;
   String get continueLabel;
   String get oneMoment;
   String get finish;
@@ -389,6 +392,12 @@ class En extends S {
   String get stepReport => 'Report';
   @override
   String get startOver => 'Start over';
+  @override
+  String get home => 'Home';
+  @override
+  String get leaveVisitTitle => 'Go back to the start?';
+  @override
+  String get leaveVisitBody => 'What you have entered so far will be cleared.';
   @override
   String get continueLabel => 'Continue';
   @override
@@ -1050,6 +1059,12 @@ class Ml extends S {
   String get stepReport => 'റിപ്പോർട്ട്';
   @override
   String get startOver => 'വീണ്ടും തുടങ്ങുക';
+  @override
+  String get home => 'ഹോം';
+  @override
+  String get leaveVisitTitle => 'തുടക്കത്തിലേക്ക് മടങ്ങണോ?';
+  @override
+  String get leaveVisitBody => 'ഇതുവരെ നൽകിയ വിവരങ്ങൾ മായ്ച്ചുകളയും.';
   @override
   String get continueLabel => 'തുടരുക';
   @override

@@ -27,6 +27,7 @@ SCHEMA = Path(__file__).with_name("schema.sql")
 OWNED = (
     "kb_pages", "kb_terms", "kb_codes", "kb_chunks", "kb_doses", "kb_drug_safety", "kb_red_flags",
     "kb_patient_topics", "kb_drug_products", "kb_disease_symptoms", "kb_quarantine",
+    "kb_entities", "kb_disease_drugs", "kb_precautions",
 )
 # The columns of kb_drugs each source fills (cleared on its reload).
 DRUG_COLUMNS = {
@@ -48,6 +49,10 @@ COLUMNS = {
                          "price_inr", "substitutes", "composition_key"),
     "kb_disease_symptoms": ("disease", "normalized", "symptom", "symptom_normalized"),
     "kb_quarantine": ("page", "item", "reason"),
+    "kb_entities": ("kind", "name", "normalized", "aliases", "description", "causes", "dosage", "uses",
+                    "side_effects", "enrich"),
+    "kb_disease_drugs": ("disease", "normalized", "drug", "drug_normalized"),
+    "kb_precautions": ("disease", "normalized", "symptom", "symptom_normalized", "precaution"),
     "kb_conditions": ("doid", "name", "normalized", "definition", "parents", "icd10cm", "icd11", "mesh", "umls"),
 }
 

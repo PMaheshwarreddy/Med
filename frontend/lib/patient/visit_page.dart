@@ -119,6 +119,9 @@ class _VisitPageState extends ConsumerState<VisitPage> {
     }
     return MedoraScaffold(
       maxWidth: 720,
+      // A patient's own phone: no kiosk to go back to, but a language choice.
+      home: false,
+      languageSwitch: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

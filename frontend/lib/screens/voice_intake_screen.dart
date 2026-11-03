@@ -86,7 +86,6 @@ class _VoiceIntakeScreenState extends ConsumerState<VoiceIntakeScreen> {
       step: FlowStep.intake,
       maxWidth: 860,
       // The conversation runs in the language it started in.
-      languageSwitch: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

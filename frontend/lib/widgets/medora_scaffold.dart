@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../l10n/strings.dart';
+import '../state/intake_controller.dart';
 import '../state/kiosk_context.dart';
 import '../state/service_status.dart';
 import '../theme/medora_theme.dart';
@@ -16,16 +17,31 @@ class MedoraScaffold extends StatelessWidget {
     required this.child,
     this.step,
     this.maxWidth = 920,
-    this.languageSwitch = true,
+    this.languageSwitch = false,
+    this.home = true,
+    this.confirmHome = true,
+    this.backOffice = false,
   });
 
   final Widget child;
   final FlowStep? step;
   final double maxWidth;
 
-  /// Whether the top bar lets the patient change language. Off where a
-  /// change would not take effect (a conversation already in a language).
+  /// Whether the top bar lets the patient change language. Only the
+  /// patient's own pages on a phone have it: on the kiosk the language is
+  /// chosen on the welcome page (the user's request of 2026-11-02).
   final bool languageSwitch;
+
+  /// A Home button back to the kiosk's welcome page (every kiosk screen
+  /// after the welcome page).
+  final bool home;
+
+  /// Whether Home first asks, because what the patient entered is cleared.
+  final bool confirmHome;
+
+  /// A Home button to the back office (the kiosk welcome page, for testing:
+  /// the user's request of 2026-11-02; a preview has its own way back).
+  final bool backOffice;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +61,13 @@ class MedoraScaffold extends StatelessWidget {
         child: SafeArea(
           child: Column(
             children: [
-              _TopBar(step: step, languageSwitch: languageSwitch),
+              _TopBar(
+                step: step,
+                languageSwitch: languageSwitch,
+                home: home,
+                confirmHome: confirmHome,
+                backOffice: backOffice,
+              ),
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(
@@ -69,10 +91,19 @@ class MedoraScaffold extends StatelessWidget {
 }
 
 class _TopBar extends ConsumerWidget {
-  const _TopBar({required this.step, required this.languageSwitch});
+  const _TopBar({
+    required this.step,
+    required this.languageSwitch,
+    required this.home,
+    required this.confirmHome,
+    required this.backOffice,
+  });
 
   final FlowStep? step;
   final bool languageSwitch;
+  final bool home;
+  final bool confirmHome;
+  final bool backOffice;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -137,6 +168,19 @@ class _TopBar extends ConsumerWidget {
           if (languageSwitch) ...[
             const SizedBox(width: 16),
             const _LanguageToggle(),
+          ],
+          if (home) ...[
+            const SizedBox(width: 16),
+            _HomeButton(confirm: confirmHome),
+          ],
+          if (backOffice && preview == null) ...[
+            const SizedBox(width: 16),
+            OutlinedButton.icon(
+              key: const Key('kiosk-back-office'),
+              onPressed: () => GoRouter.of(context).go('/'),
+              icon: const Icon(Icons.home_rounded, size: 20),
+              label: Text(S.of(context).home),
+            ),
           ],
         ],
       ),
@@ -349,6 +393,50 @@ class BrandMark extends StatelessWidget {
           color: MedoraColors.background,
         ),
       ),
+    );
+  }
+}
+
+/// Back to the kiosk's welcome page. Mid-visit it asks first, because what
+/// the patient entered is cleared; the next patient starts in English.
+class _HomeButton extends ConsumerWidget {
+  const _HomeButton({required this.confirm});
+
+  final bool confirm;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = S.of(context);
+    return OutlinedButton.icon(
+      key: const Key('kiosk-home'),
+      onPressed: () async {
+        if (confirm) {
+          final sure = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text(s.leaveVisitTitle),
+              content: Text(s.leaveVisitBody),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(s.cancel),
+                ),
+                FilledButton(
+                  key: const Key('kiosk-home-confirm'),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: Text(s.startOver),
+                ),
+              ],
+            ),
+          );
+          if (sure != true || !context.mounted) return;
+        }
+        ref.read(intakeProvider.notifier).reset();
+        ref.read(languageProvider.notifier).reset();
+        GoRouter.of(context).go('/kiosk');
+      },
+      icon: const Icon(Icons.home_rounded, size: 20),
+      label: Text(s.home),
     );
   }
 }

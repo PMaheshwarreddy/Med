@@ -703,6 +703,17 @@ class _Choice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!expand) return _tile(compact: false);
+    // On a narrow phone a row of three tiles has no room for icon and word:
+    // the word wins ("Female", not "Fe...").
+    return LayoutBuilder(
+      builder: (context, constraints) =>
+          _tile(compact: constraints.maxWidth < 120),
+    );
+  }
+
+  Widget _tile({required bool compact}) {
+    final icon = compact ? null : this.icon;
     final foreground = selected ? Colors.white : MedoraColors.text;
     return Semantics(
       button: true,
@@ -715,7 +726,10 @@ class _Choice extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
             constraints: const BoxConstraints(minHeight: 52),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 6 : 16,
+              vertical: 12,
+            ),
             decoration: BoxDecoration(
               gradient: selected
                   ? MedoraTheme.tint(MedoraColors.primary)
@@ -739,12 +753,15 @@ class _Choice extends StatelessWidget {
               mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  selected ? Icons.check_circle_rounded : icon,
-                  size: icon == null && !selected ? 0 : 20,
-                  color: selected ? Colors.white : MedoraColors.primary,
-                ),
-                if (icon != null || selected) const SizedBox(width: 8),
+                if (!compact || selected) ...[
+                  Icon(
+                    selected ? Icons.check_circle_rounded : icon,
+                    size: icon == null && !selected ? 0 : (compact ? 16 : 20),
+                    color: selected ? Colors.white : MedoraColors.primary,
+                  ),
+                  if (icon != null || selected)
+                    SizedBox(width: compact ? 4 : 8),
+                ],
                 Flexible(
                   child: Text(
                     label,

@@ -5,12 +5,8 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pytest
-from sqlalchemy.orm import Session
 
-from app.db import make_engine
-from app.ingest.pipeline import init_db
 from app.knowledge_base import KnowledgeIndex
-from app.knowledge_models import Disease, DiseaseLink, Drug, Precaution, Symptom
 from app.models import IntakeSession
 from app.panel import SPECIALISTS, PanelError, PanelResult, parse_json
 from app.triage import build_report, choose_panel
@@ -39,41 +35,24 @@ class WordEmbedder:
         return np.asarray(rows)
 
 
+def knowledge_rows(precautions: dict | None = None) -> dict:
+    """Rows as the index reads them from the knowledge database."""
+    rows = {"entities": [], "pairs": [], "disease_drugs": [], "precautions": [], "drug_names": []}
+    for name, (symptom_names, drugs, lines) in KNOWLEDGE.items():
+        rows["entities"].append(["disease", name, [], f"{name} described.", "", "", False])
+        rows["pairs"] += [[name, s] for s in symptom_names]
+        for d in drugs:
+            rows["entities"].append(["drug", d, [], "", "", f"Used for {name}.", False])
+            rows["disease_drugs"].append([name, d])
+        rows["precautions"] += [[name, "", p] for p in lines + (precautions or {}).get(name, [])]
+    # A reversed row: a symptom posing as a disease with a huge symptom list.
+    rows["pairs"] += [["Pain", f"Condition {i}"] for i in range(95)] + [["Pain", "Fever"]]
+    return rows
+
+
 @pytest.fixture
 def kb(tmp_path):
-    engine = make_engine(f"sqlite:///{tmp_path / 'kb.db'}")
-    init_db(engine)
-    with Session(engine) as db:
-        symptoms: dict[str, Symptom] = {}
-        for name, (symptom_names, drugs, precautions) in KNOWLEDGE.items():
-            disease = Disease(name=name, normalized_name=name.lower(), aliases=[], description=f"{name} described.")
-            db.add(disease)
-            db.flush()
-            for s in symptom_names:
-                if s not in symptoms:
-                    symptoms[s] = Symptom(name=s, normalized_name=s.lower(), aliases=[])
-                    db.add(symptoms[s])
-                    db.flush()
-                db.add(DiseaseLink(disease_id=disease.id, symptom_id=symptoms[s].id))
-            for d in drugs:
-                drug = Drug(name=d, normalized_name=d.lower(), aliases=[], uses=f"Used for {name}.")
-                db.add(drug)
-                db.flush()
-                db.add(DiseaseLink(disease_id=disease.id, drug_id=drug.id))
-            for p in precautions:
-                db.add(Precaution(disease_id=disease.id, precaution=p))
-        # A reversed row: a symptom posing as a disease with a huge symptom list.
-        junk = Disease(name="Pain", normalized_name="pain", aliases=[])
-        db.add(junk)
-        db.flush()
-        for i in range(95):
-            filler = Symptom(name=f"Condition {i}", normalized_name=f"condition {i}", aliases=[])
-            db.add(filler)
-            db.flush()
-            db.add(DiseaseLink(disease_id=junk.id, symptom_id=filler.id))
-        db.add(DiseaseLink(disease_id=junk.id, symptom_id=symptoms["Fever"].id))
-        db.commit()
-    return KnowledgeIndex(engine, WordEmbedder(), tmp_path / "cache")
+    return KnowledgeIndex.from_rows(knowledge_rows(), WordEmbedder(), tmp_path / "cache")
 
 
 def session_for(symptoms, age=29, vitals=None):
@@ -320,11 +299,9 @@ def precautions_for(kb, llm, panel=UTI_PANEL, symptoms="It burns when I pee", **
     return report["precautions"], report["precautionsSource"]
 
 
-def test_knowledge_base_precautions_are_offered_first_and_only_selected(kb):
-    with Session(kb._engine) as db:
-        uti = db.query(Disease).filter_by(normalized_name="urinary tract infection").one()
-        db.add_all(Precaution(disease_id=uti.id, precaution=p) for p in ["Urinate after intercourse.", "Wipe from front to back.", "Avoid holding urine."])
-        db.commit()
+def test_knowledge_base_precautions_are_offered_first_and_only_selected(tmp_path):
+    extra = {"Urinary tract infection": ["Urinate after intercourse.", "Wipe from front to back.", "Avoid holding urine."]}
+    kb = KnowledgeIndex.from_rows(knowledge_rows(extra), WordEmbedder(), tmp_path / "cache")
     llm = Understander(UTI_SYMPTOMS, ["Urology"], select={"keep": [1, 3, 4, 99], "written": ["Something extra to do today."]})
     lines, source = precautions_for(kb, llm)
 

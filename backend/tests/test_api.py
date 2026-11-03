@@ -429,52 +429,7 @@ def test_older_databases_are_upgraded_in_place(tmp_path):
 # --- Knowledge management ----------------------------------------------------
 
 
-def test_knowledge_browse_and_ingestion_from_the_back_office(client, tmp_path):
-    assert client.get("/api/admin/knowledge/summary").status_code == 401
-    assert client.get("/api/admin/knowledge/summary", headers=ADMIN).json() == {"ready": False, "legacyTables": []}
-    assert client.get("/api/admin/knowledge/diseases", headers=ADMIN).status_code == 409
-    assert client.post("/api/admin/knowledge/init", headers=ADMIN).json() == {"ready": True}
-
-    class Planner:
-        name = "planner"
-
-        async def json(self, system, user, thinking=None, **_):
-            return {"content": "records", "verdict": "usable", "summary": "Diseases and symptoms", "confidence": 0.95, "outputs": [
-                {"kind": "link", "disease": {"sources": ["disease"]}, "symptom": {"sources": ["symptoms"], "split": ","}}]}  # fmt: skip
-
-    client.app.state.ingest.llm = Planner()
-    data = b"disease,symptoms\nInfluenza,\"fever, cough\"\nCommon cold,\"cough, sneezing\"\n"
-    up = client.post("/api/admin/knowledge/ingest/upload", files={"file": ("../odd name.csv", data)}, headers=ADMIN)
-    assert up.status_code == 201, up.text
-    run = up.json()
-    assert (run["filename"], run["status"], run["preview"]["links"]) == ("odd name.csv", "planned", 4)
-    again = client.post("/api/admin/knowledge/ingest/upload", files={"file": ("copy.csv", data)}, headers=ADMIN)
-    assert again.status_code == 409
-    assert len(list((tmp_path / "data" / "knowledge").iterdir())) == 1
-
-    act = lambda action, **body: client.post(  # noqa: E731
-        f"/api/admin/knowledge/ingest/runs/{run['id']}/{action}", json=body or None, headers=ADMIN
-    )
-    assert act("load").status_code == 409  # not approved yet
-    assert act("reject").status_code == 422  # a reason is required
-    assert act("approve").json()["status"] == "approved"
-    loaded = act("load").json()
-    assert loaded["status"] == "loaded" and loaded["loaded"]["links"]["created"] == 4
-
-    summary = client.get("/api/admin/knowledge/summary", headers=ADMIN).json()
-    assert (summary["diseases"], summary["symptoms"], summary["symptomLinks"]) == (2, 3, 4)
-    found = client.get("/api/admin/knowledge/symptoms?q=COUGH", headers=ADMIN).json()
-    assert found["total"] == 1 and found["items"][0] == {"id": found["items"][0]["id"], "name": "Cough", "aliases": [], "links": 2, "description": ""}
-    flu = client.get("/api/admin/knowledge/diseases?q=influ", headers=ADMIN).json()["items"][0]
-    detail = client.get(f"/api/admin/knowledge/diseases/{flu['id']}", headers=ADMIN).json()
-    assert detail["symptoms"] == ["Cough", "Fever"]
-
-    detail = client.get(f"/api/admin/knowledge/ingest/runs/{run['id']}", headers=ADMIN).json()
-    assert detail["outputs"][0]["kind"] == "link"
-    assert act("undo").json()["status"] == "undone"
-    assert client.get("/api/admin/knowledge/summary", headers=ADMIN).json()["diseases"] == 0
-    events = [e["event"] for e in client.get("/api/admin/logs", headers=ADMIN).json()]
-    assert events[:4] == ["knowledge.undo", "knowledge.load", "knowledge.approve", "knowledge.planned"]
+# The Database tab now reads the knowledge database only: tests/test_kb_uploads.py.
 
 
 # --- API keys, system settings, kiosk preview ---------------------------------

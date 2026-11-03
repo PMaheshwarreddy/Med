@@ -5,8 +5,14 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..knowledge_models import ENTITY_FIELDS
 from .sniff import Sniffed
+
+# Free-text columns each kind of entry accepts from a source file.
+ENTITY_FIELDS = {
+    "diseases": ("description", "causes"),
+    "symptoms": ("description",),
+    "drugs": ("dosage", "uses", "side_effects"),
+}
 
 
 class Col(BaseModel):

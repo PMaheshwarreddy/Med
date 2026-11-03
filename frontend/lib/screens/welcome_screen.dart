@@ -152,6 +152,8 @@ class WelcomeScreen extends ConsumerWidget {
 
     return MedoraScaffold(
       maxWidth: 1120,
+      home: false,
+      backOffice: true,
       child: LayoutBuilder(
         builder: (context, constraints) => constraints.maxWidth >= 860
             ? Padding(

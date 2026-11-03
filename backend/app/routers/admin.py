@@ -280,8 +280,10 @@ def _system(db: Db, request: Request) -> dict:
             item(
                 "Knowledge search",
                 state.kb.available(),
-                f"Embeddings: {settings.ollama_embed_model or 'off, matching by name only'}",
-                "MEDORA_OLLAMA_EMBED_MODEL",
+                "Knowledge database"
+                + ("" if state.kb.source in ("database", "given rows") else f" ({state.kb.source})")
+                + f"; embeddings: {settings.ollama_embed_model or 'off, matching by name only'}",
+                "MEDORA_KNOWLEDGE_DATABASE_URL, MEDORA_OLLAMA_EMBED_MODEL",
             ),
             item(
                 "Report by email",
