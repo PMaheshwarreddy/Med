@@ -322,8 +322,11 @@ def update_system(body: SystemUpdate, db: Db, request: Request) -> dict:
 
 
 @router.get("/overview")
-def overview(db: Db, request: Request) -> dict:
+def overview(db: Db, request: Request, tz: int = Query(default=0, ge=-14 * 60, le=14 * 60)) -> dict:
+    """The dashboard. `tz` is the viewer's offset from UTC in minutes (IST is
+    330), so "today" and the days of the week are the viewer's days."""
     state = request.app.state
+    local = timezone(timedelta(minutes=tz))
     day_ago = datetime.now(timezone.utc) - timedelta(days=1)
 
     def count(model, *where) -> int:
@@ -332,14 +335,16 @@ def overview(db: Db, request: Request) -> dict:
     voice_available, voice_detail = voice_capability(state)
     sync = state.runtime.sync
 
-    # Sessions per day for the last week, oldest first, including empty days.
-    today = datetime.now(timezone.utc).date()
-    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    # Sessions per day for the last week in the viewer's time zone, oldest
+    # first, including empty days. Stored times are UTC (naive on SQLite).
+    today = datetime.now(local).date()
+    week_ago = datetime.now(timezone.utc) - timedelta(days=8)
     per_day = {today - timedelta(days=offset): 0 for offset in range(6, -1, -1)}
     for (created,) in db.execute(
         select(IntakeSession.created_at).where(IntakeSession.created_at >= week_ago)
     ):
-        day = created.astimezone(timezone.utc).date() if created.tzinfo else created.date()
+        aware = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+        day = aware.astimezone(local).date()
         if day in per_day:
             per_day[day] += 1
     names = _tenant_names(db)
@@ -375,7 +380,11 @@ def overview(db: Db, request: Request) -> dict:
         "sessions": count(IntakeSession),
         "sessionsLast24h": count(IntakeSession, IntakeSession.created_at >= day_ago),
         "reports": count(TriageReport),
-        "errorsLast24h": count(ActivityLog, ActivityLog.level == "error", ActivityLog.at >= day_ago),
+        # The same lines the Activity logs page shows (hospital events are not).
+        "errorsLast24h": count(
+            ActivityLog, ActivityLog.level == "error", ActivityLog.at >= day_ago,
+            ActivityLog.event.not_in(HOSPITAL_EVENTS),
+        ),
         "voice": {"available": voice_available, "detail": voice_detail},
         "reportModel": state.llm.name,
         "sync": {

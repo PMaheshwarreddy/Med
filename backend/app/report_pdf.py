@@ -60,7 +60,7 @@ _L = {
         "Only the doctor or nurse gives this. Do not take it yourself.",
         "ഇത് ഡോക്ടറോ നഴ്സോ മാത്രമേ നൽകൂ. സ്വയം എടുക്കരുത്.",
     ),
-    "precautions": ("While you wait", "കാത്തിരിക്കുമ്പോൾ"),
+    "precautions": ("Precautions", "മുൻകരുതലുകൾ"),
     "lifestyle": ("Lifestyle advice", "ജീവിതശൈലി നിർദ്ദേശങ്ങൾ"),
     "disclaimer": (
         "This is an automated summary for your doctor to confirm. It is not a diagnosis or a prescription.",
@@ -300,13 +300,18 @@ def render_pdf(session: IntakeSession, report: dict) -> bytes:
     elif view.get("medicinesNote"):
         story += [*title("medicines"), *both(view["medicinesNote"])]
 
-    if view.get("precautions"):
+    # One "Precautions" section: the reviewed precautions, then the self-care
+    # lines, without repeats (the user's request of 2026-11-04: no "While you
+    # wait" and no separate "Lifestyle advice").
+    lines, seen = [], set()
+    for line in [*(view.get("precautions") or []), *(view.get("lifestyle") or [])]:
+        key = (line.get("en") if isinstance(line, dict) else str(line)).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            lines.append(line)
+    if lines:
         story += title("precautions")
-        for line in view["precautions"]:
-            story += both(line, prefix="&bull; ")
-    if view.get("lifestyle"):
-        story += title("lifestyle")
-        for line in view["lifestyle"]:
+        for line in lines:
             story += both(line, prefix="&bull; ")
 
     story += [Spacer(1, 14), *both(_L["disclaimer"], small)]

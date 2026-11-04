@@ -20,9 +20,13 @@ import 'screens/voice_intake_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'state/kiosk_context.dart';
 import 'theme/medora_theme.dart';
+import 'widgets/broken_part.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // A part of a page that fails to draw shows a calm notice, never the red
+  // error box; the error is still printed to the console.
+  ErrorWidget.builder = BrokenPart.fromError;
   final file = await AppConfig.loadLocalFile();
   // A kiosk is tied to its client by opening its link once
   // (`/#/kiosk?key=mk_...`); after that the browser remembers the key.

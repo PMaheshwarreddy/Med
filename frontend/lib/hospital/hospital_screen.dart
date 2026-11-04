@@ -20,7 +20,6 @@ import 'pages/visits_page.dart';
 enum HospitalPage {
   dashboard('Dashboard', Icons.space_dashboard_outlined),
   doctors('Doctors', Icons.medical_services_outlined),
-  staff('Staff', Icons.badge_outlined),
   departments('Departments', Icons.apartment_outlined),
   visits('Visits and reports', Icons.folder_shared_outlined),
   activity('Audit and activity', Icons.shield_outlined),
@@ -97,11 +96,6 @@ class _HospitalScreenState extends ConsumerState<HospitalScreen> {
       api: api,
       role: 'doctor',
     ),
-    HospitalPage.staff => PeoplePage(
-      key: const ValueKey('staff'),
-      api: api,
-      role: 'staff',
-    ),
     HospitalPage.departments => DepartmentsPage(api: api),
     HospitalPage.visits => VisitsPage(api: api),
     HospitalPage.activity => ActivityPage(api: api),
@@ -145,17 +139,15 @@ class _HospitalScreenState extends ConsumerState<HospitalScreen> {
               backgroundColor: MedoraColors.surface,
             ),
       body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (wide) SizedBox(width: 260, child: sidebar),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(28, 28, 28, 40),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1180),
-                  child: _content(api),
-                ),
-              ),
+              // Pages fill the width and start at the top (a short page
+              // used to float in the middle of the screen).
+              child: _content(api),
             ),
           ),
         ],

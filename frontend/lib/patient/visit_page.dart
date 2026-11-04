@@ -185,7 +185,7 @@ class _VisitPageState extends ConsumerState<VisitPage> {
       ],
       if (view.precautions.isNotEmpty) ...[
         const SizedBox(height: 20),
-        BiCard(title: r.lifestyleAdvice, bullets: view.precautions),
+        BiCard(title: r.whileYouWait, bullets: view.precautions),
       ],
       if (view.followUp case final followUp?) ...[
         const SizedBox(height: 20),

@@ -37,6 +37,10 @@ class FakeHospital {
         headers: {'content-type': 'application/json; charset=utf-8'},
       );
       final path = request.url.path.replaceFirst('/api/hospital', '');
+      // Like a real server, the logs take a moment: the page redraws first.
+      if (path == '/audit' || path == '/activity') {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
       return switch ((request.method, path)) {
         ('POST', '/auth/login') =>
           jsonDecode(request.body)['password'] == 'right'
@@ -116,6 +120,20 @@ class FakeHospital {
             'urgency': 'soon',
             'department': 'General OPD',
           },
+          {
+            'id': 'v2',
+            'at': '2026-10-22T06:00:00Z',
+            'name': 'Sharon Ann Jose',
+            'age': 23,
+            'gender': 'female',
+            'phone': '8829325388',
+            'symptoms':
+                'Fever, Cough, Sore throat, Cold or runny nose, Headache, Body pain, Breathing difficulty',
+            'urgency': 'emergency',
+            'department': 'Emergency Department',
+            'doctorStatus': 'signed',
+            'doctor': 'Medora',
+          },
         ]),
         ('GET', '/visits/v1') => json({
           'id': 'v1',
@@ -138,6 +156,27 @@ class FakeHospital {
             'vitalsAssessment': [],
           },
         }),
+        ('GET', '/audit') => json([
+          {
+            'id': 'a1',
+            'at': '2026-10-22T05:00:00Z',
+            'user': 'Meera Admin',
+            'role': 'hospital_admin',
+            'action': 'visit.viewed',
+            'detail': 'Asha Rao',
+          },
+        ]),
+        ('GET', '/activity') => json([
+          {
+            'id': 'k1',
+            'at': '2026-10-22T05:00:00Z',
+            'level': 'info',
+            'event': 'report.created',
+            'message': 'Report ready',
+          },
+          // A line the server sent without a message.
+          {'id': 'k2', 'at': null, 'level': 'error', 'event': 'report.error'},
+        ]),
         _ => json({'detail': 'Not found'}, 404),
       };
     }),
@@ -306,5 +345,47 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Visits today'), findsNothing);
+  });
+
+  testWidgets('switching audit log and kiosk activity never breaks the page', (
+    tester,
+  ) async {
+    await pumpPortal(tester);
+    await signIn(tester);
+    await tester.tap(find.byKey(const Key('hnav-activity')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Opened a patient visit'), findsOneWidget);
+
+    // Switching views: the audit rows must never be drawn as kiosk rows.
+    await tester.tap(find.text('Kiosk activity'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Report ready'), findsOneWidget);
+    expect(find.text('report.error'), findsOneWidget);
+    expect(find.text('Opened a patient visit'), findsNothing);
+
+    await tester.tap(find.text('Audit log'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Opened a patient visit'), findsOneWidget);
+  });
+
+  testWidgets('the visits table fits a laptop screen without scrolling', (
+    tester,
+  ) async {
+    await pumpPortal(tester);
+    tester.view.physicalSize = const Size(1600, 1000);
+    await signIn(tester);
+    await tester.tap(find.byKey(const Key('hnav-visits')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    final table = tester.getRect(find.byType(Table).first);
+    final view = tester.getRect(find.byType(Scaffold).first);
+    expect(table.right, lessThanOrEqualTo(view.right));
+    expect(find.byKey(const Key('view-visit-v2')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

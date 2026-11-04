@@ -96,6 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Build the search index now, so the first report does not wait
             # for the symptom embeddings.
             asyncio.get_running_loop().run_in_executor(None, app.state.kb.warm)
+            # Connect to the knowledge database at once and count, so the
+            # back office shows current numbers the moment it is opened.
+            asyncio.get_running_loop().run_in_executor(None, app.state.kb_stats.summary)
             if app.state.retriever is not None:
                 asyncio.get_running_loop().run_in_executor(None, app.state.retriever.warm)
             async def move_legacy() -> None:

@@ -732,3 +732,13 @@ class VisitStatus {
   final String doctor;
   final FinalReport? report;
 }
+
+/// The patient's precautions: the reviewed precautions, then the self-care
+/// lines, each once (shown under one "Precautions" heading).
+List<Bi> precautions(PatientView view) {
+  final seen = <String>{};
+  return [
+    for (final line in [...view.precautions, ...view.lifestyle])
+      if (seen.add(line.en.trim().toLowerCase())) line,
+  ];
+}

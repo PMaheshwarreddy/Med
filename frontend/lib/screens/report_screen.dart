@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../l10n/strings.dart';
@@ -231,13 +230,11 @@ class _ReportScreenState extends ConsumerState<ReportScreen> {
           const SizedBox(height: 20),
           BiCard(title: r.medicines, paragraphs: [view.medicinesNote!]),
         ],
-        if (view.precautions.isNotEmpty) ...[
+        // One "Precautions" card: reviewed precautions, then self-care
+        // lines, without repeats (no "While you wait" or "Lifestyle advice").
+        if (precautions(view).isNotEmpty) ...[
           const SizedBox(height: 20),
-          BiCard(title: r.whileYouWait, bullets: view.precautions),
-        ],
-        if (view.lifestyle.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          BiCard(title: r.lifestyleAdvice, bullets: view.lifestyle),
+          BiCard(title: r.whileYouWait, bullets: precautions(view)),
         ],
         const SizedBox(height: 20),
         MedoraCard(
@@ -246,16 +243,7 @@ class _ReportScreenState extends ConsumerState<ReportScreen> {
             children: [
               Text(s.getMyReport, style: text.titleLarge),
               const SizedBox(height: 16),
-              _DeliveryRow(
-                icon: Icons.sms_outlined,
-                label: s.textMessage,
-                target: patient.phone,
-                unavailable: _status.sms ? null : s.smsNotSetUp,
-                sending: _sending.contains('sms'),
-                sent: _sent.contains('sms'),
-                onSend: () => _send('sms', s.textMessage),
-              ),
-              const Divider(height: 28, color: MedoraColors.border),
+              // No SMS for now: email only (the user's request of 2026-11-04).
               _DeliveryRow(
                 icon: Icons.mail_outline,
                 label: s.email,
@@ -504,37 +492,10 @@ class _DoctorNext extends StatelessWidget {
     final r = ReportLanguage.stringsOf(context);
     final text = Theme.of(context).textTheme;
     final number = sessionId.substring(0, 6).toUpperCase();
+    // Only the visit number (the user's request of 2026-11-04: no QR and
+    // no "a doctor will see you" text here).
     return MedoraCard(
-      child: Wrap(
-        spacing: 24,
-        runSpacing: 16,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 380),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(r.visitNumber(number), style: text.titleLarge),
-                const SizedBox(height: 10),
-                Text(r.doctorWillSee, style: text.bodyLarge),
-                const SizedBox(height: 10),
-                Text(r.scanForFinal, style: text.bodyMedium),
-              ],
-            ),
-          ),
-          Container(
-            key: const Key('final-report-qr'),
-            padding: const EdgeInsets.all(10),
-            color: Colors.white,
-            child: QrImageView(
-              data: api.patientPage(sessionId).toString(),
-              size: 170,
-              backgroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
+      child: Text(r.visitNumber(number), style: text.titleLarge),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../api/api_client.dart' show ApiException;
 import '../../hospital/hospital_widgets.dart';
@@ -98,6 +99,7 @@ class _ConsultationsPageState extends State<ConsultationsPage> {
                 'Patient',
                 'Diagnosis',
                 'Medicines',
+                'Report',
               ],
               rows: [
                 for (final r in rows)
@@ -123,6 +125,18 @@ class _ConsultationsPageState extends State<ConsultationsPage> {
                       child: Text((r['diagnosis'] as List).join(', ')),
                     ),
                     Text('${r['medicines']}'),
+                    IconButton(
+                      key: Key('view-report-${r['id']}'),
+                      tooltip: 'View the signed report',
+                      icon: const Icon(
+                        Icons.visibility_outlined,
+                        color: MedoraColors.primary,
+                      ),
+                      onPressed: () => launchUrl(
+                        widget.api.patientPdf(r['id'] as String),
+                        webOnlyWindowName: '_blank',
+                      ),
+                    ),
                   ],
               ],
             ),

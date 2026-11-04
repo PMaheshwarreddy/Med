@@ -353,26 +353,15 @@ void main() {
   testWidgets('delivery that is not set up cannot be tapped', (tester) async {
     await pumpReport(tester, reportFails: false);
 
-    expect(find.text('Text messages are not set up yet'), findsOneWidget);
+    // Email only: there is no text-message option and no QR code.
+    expect(find.text('Text message'), findsNothing);
+    expect(find.byKey(const Key('final-report-qr')), findsNothing);
     expect(find.text('Email is not set up yet'), findsOneWidget);
     for (final button in tester.widgetList<OutlinedButton>(
       find.widgetWithText(OutlinedButton, 'Send'),
     )) {
       expect(button.onPressed, isNull);
     }
-  });
-
-  testWidgets('sends by text message when it is set up', (tester) async {
-    final requests = await pumpReport(tester, reportFails: false, sms: true);
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Send').first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(requests.last.url.path, '/api/sessions/s1/report/send');
-    expect(jsonDecode(requests.last.body), {'channel': 'sms'});
-    expect(find.text('Report sent by text message.'), findsOneWidget);
-    expect(find.text('Send again'), findsOneWidget);
   });
 
   testWidgets('a failed report is retried once, then offers a retry', (

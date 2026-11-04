@@ -159,7 +159,9 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                       child: Align(
                         alignment: Alignment.topLeft,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 1280),
+                          constraints: const BoxConstraints(
+                            maxWidth: double.infinity,
+                          ),
                           // A new key per page so each one loads afresh.
                           child: KeyedSubtree(
                             key: ValueKey(_page),

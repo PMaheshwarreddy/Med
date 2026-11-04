@@ -275,6 +275,10 @@ class Rows extends StatelessWidget {
           constraints: BoxConstraints(minWidth: constraints.maxWidth),
           child: DataTable(
             showCheckboxColumn: false,
+            // Tight enough that a full table fits a laptop screen without
+            // scrolling sideways (the user's request of 2026-11-04).
+            columnSpacing: 20,
+            horizontalMargin: 16,
             headingRowHeight: 42,
             headingRowColor: const WidgetStatePropertyAll(
               MedoraColors.background,

@@ -522,21 +522,30 @@ void main() {
     }
   });
 
-  testWidgets('dashboard shows figures, health and recent activity', (
+  testWidgets('dashboard: figures, the week, activity; keeps itself current', (
     tester,
   ) async {
-    await pumpAdmin(tester);
+    final server = await pumpAdmin(tester);
     await signIn(tester);
 
     expect(find.text('Offline mode'), findsOneWidget);
     expect(find.text('Patient sessions, last 7 days'), findsOneWidget);
-    expect(find.text('5 rows waiting to copy'), findsOneWidget);
-    expect(
-      find.text('73,739 symptoms, 21,790 diseases, 3,384 medications'),
-      findsOneWidget,
-    );
+    expect(find.text('Active clients'), findsOneWidget);
     expect(find.text('model is down'), findsOneWidget);
     expect(find.text('1 active keys'), findsOneWidget);
+    // No health panel and no Refresh button.
+    expect(find.text('System health'), findsNothing);
+    expect(find.text('5 rows waiting to copy'), findsNothing);
+    expect(find.text('Refresh'), findsNothing);
+    final before = server.requests
+        .where((r) => r == 'GET /api/admin/overview')
+        .length;
+    await tester.pump(const Duration(seconds: 31));
+    await tester.pumpAndSettle();
+    expect(
+      server.requests.where((r) => r == 'GET /api/admin/overview').length,
+      greaterThan(before),
+    );
   });
 
   testWidgets('clients: add one, get its one key and link, change switches', (

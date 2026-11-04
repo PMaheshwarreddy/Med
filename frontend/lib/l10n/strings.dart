@@ -906,7 +906,7 @@ class En extends S {
   @override
   String atMost(String amount) => 'At most $amount in 24 hours';
   @override
-  String get whileYouWait => 'While you wait';
+  String get whileYouWait => 'Precautions';
   @override
   String get lifestyleAdvice => 'Lifestyle advice';
   @override
@@ -1622,7 +1622,7 @@ class Ml extends S {
   @override
   String atMost(String amount) => '24 മണിക്കൂറിൽ പരമാവധി $amount';
   @override
-  String get whileYouWait => 'കാത്തിരിക്കുമ്പോൾ';
+  String get whileYouWait => 'മുൻകരുതലുകൾ';
   @override
   String get lifestyleAdvice => 'ജീവിതശൈലി നിർദ്ദേശങ്ങൾ';
   @override

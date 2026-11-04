@@ -958,3 +958,27 @@ def test_status_gives_the_servers_network_address_for_qr_codes(client):
     address = client.get("/api/status").json()["lanAddress"]
     # A private IPv4 address, or empty on a machine with no network card.
     assert address == "" or ipaddress.ip_address(address).is_private
+
+
+def test_dashboard_counts_days_in_the_viewers_time_zone(client):
+    """A visit at 20:00 UTC yesterday is today in India (01:30 IST)."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+
+    from app.models import IntakeSession
+
+    sid = client.post("/api/sessions", json=SESSION).json()["id"]
+    ist = timezone(timedelta(minutes=330))
+    today_ist = datetime.now(ist).date()
+    # 01:30 IST today = 20:00 UTC the day before.
+    moment = datetime.combine(today_ist, datetime.min.time(), ist) + timedelta(hours=1, minutes=30)
+    with Session(client.app.state.engine) as db:
+        db.execute(update(IntakeSession).where(IntakeSession.id == sid).values(
+            created_at=moment.astimezone(timezone.utc).replace(tzinfo=None)))
+        db.commit()
+    days = lambda tz: {d["date"]: d["count"] for d in client.get(  # noqa: E731
+        f"/api/admin/overview?tz={tz}", headers=ADMIN).json()["sessionsByDay"]}
+    assert days(330)[today_ist.isoformat()] == 1
+    assert days(0).get(today_ist.isoformat(), 0) == 0  # in UTC it was yesterday

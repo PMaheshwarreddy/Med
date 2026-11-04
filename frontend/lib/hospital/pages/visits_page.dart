@@ -89,50 +89,7 @@ class _VisitsPageState extends State<VisitsPage>
                 ),
               ),
               const SizedBox(height: 14),
-              Rows(
-                columns: const [
-                  'When',
-                  'Patient',
-                  'Phone',
-                  'Symptoms',
-                  'Urgency',
-                  'Department',
-                  'Doctor',
-                ],
-                onTap: (i) => _open(_visits[i]),
-                rows: [
-                  for (final v in _visits)
-                    [
-                      Text(when(v['at'])),
-                      Text(
-                        '${v['name']}, ${v['age']} ${(v['gender'] as String? ?? '').isEmpty ? '' : (v['gender'] as String)[0].toUpperCase()}',
-                      ),
-                      Text(v['phone'] as String? ?? ''),
-                      SizedBox(
-                        width: 260,
-                        child: Text(
-                          v['symptoms'] as String? ?? '',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      UrgencyTag(v['urgency'] as String?),
-                      Text(v['department'] as String? ?? '—'),
-                      switch (v['doctorStatus']) {
-                        'signed' => Tag(
-                          'Signed by ${v['doctor']}',
-                          MedoraColors.teal,
-                        ),
-                        'with_doctor' => Tag(
-                          'With ${v['doctor']}',
-                          MedoraColors.primary,
-                        ),
-                        'waiting' => const Tag('Waiting', MedoraColors.ochre),
-                        _ => const Text('—'),
-                      },
-                    ],
-                ],
-              ),
+              _VisitTable(visits: _visits, onOpen: _open),
             ],
           ),
         ),
@@ -258,6 +215,130 @@ class _VisitDialog extends StatelessWidget {
           style: FilledButton.styleFrom(backgroundColor: MedoraColors.primary),
           child: const Text('Close'),
         ),
+      ],
+    );
+  }
+}
+
+/// The visits as a table whose columns share the page's width, so it always
+/// fits the screen with no sideways scrolling (the user's request of
+/// 2026-11-04). Long text wraps onto a second line.
+class _VisitTable extends StatelessWidget {
+  const _VisitTable({required this.visits, required this.onOpen});
+
+  final List<Map<String, dynamic>> visits;
+  final ValueChanged<Map<String, dynamic>> onOpen;
+
+  static const _columns = [
+    ('When', 1.1),
+    ('Patient', 1.5),
+    ('Phone', 1.1),
+    ('Symptoms', 2.6),
+    ('Urgency', 1.0),
+    ('Department', 1.6),
+    ('Doctor', 1.5),
+    ('View', 0.5),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    if (visits.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        child: Center(
+          child: Text(
+            'Nothing here yet.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      );
+    }
+    const head = TextStyle(
+      fontFamily: MedoraFonts.sans,
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: MedoraColors.muted,
+    );
+    const body = TextStyle(
+      fontFamily: MedoraFonts.sans,
+      fontFamilyFallback: MedoraFonts.fallback,
+      fontSize: 14,
+      color: MedoraColors.text,
+    );
+    Widget cell(Widget child) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      child: child,
+    );
+    Widget text(String value) =>
+        Text(value, style: body, maxLines: 2, overflow: TextOverflow.ellipsis);
+    String gender(Object? g) =>
+        g is String && g.isNotEmpty ? ' ${g[0].toUpperCase()}' : '';
+
+    return Table(
+      columnWidths: {
+        for (final (i, c) in _columns.indexed) i: FlexColumnWidth(c.$2),
+      },
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      border: const TableBorder(
+        horizontalInside: BorderSide(color: MedoraColors.border),
+      ),
+      children: [
+        TableRow(
+          decoration: const BoxDecoration(color: MedoraColors.background),
+          children: [
+            for (final c in _columns)
+              cell(Text(c.$1, style: head, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+        for (final v in visits)
+          TableRow(
+            children: [
+              for (final w in [
+                text(when(v['at'])),
+                text(
+                  '${v['name'] ?? ''}, ${v['age'] ?? ''}${gender(v['gender'])}',
+                ),
+                text(v['phone'] as String? ?? ''),
+                text(v['symptoms'] as String? ?? ''),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: UrgencyTag(v['urgency'] as String?),
+                  ),
+                ),
+                text(v['department'] as String? ?? '—'),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: switch (v['doctorStatus']) {
+                      'signed' => Tag(
+                        'Signed by ${v['doctor']}',
+                        MedoraColors.teal,
+                      ),
+                      'with_doctor' => Tag(
+                        'With ${v['doctor']}',
+                        MedoraColors.primary,
+                      ),
+                      'waiting' => const Tag('Waiting', MedoraColors.ochre),
+                      _ => const Text('—', style: body),
+                    },
+                  ),
+                ),
+                IconButton(
+                  key: Key('view-visit-${v['id']}'),
+                  tooltip: 'Open the visit and its report',
+                  icon: const Icon(
+                    Icons.visibility_outlined,
+                    color: MedoraColors.primary,
+                  ),
+                  onPressed: () => onOpen(v),
+                ),
+              ])
+                TableRowInkWell(onTap: () => onOpen(v), child: cell(w)),
+            ],
+          ),
       ],
     );
   }

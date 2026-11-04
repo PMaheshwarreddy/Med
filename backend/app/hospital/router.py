@@ -225,7 +225,6 @@ def dashboard(user: HospitalAdmin, db: Db) -> dict:
         "recent": [_visit_out(s, r) for s, r in today[:8]] or [_visit_out(s, r) for s, r in week[:8]],
         "people": {
             "doctors": counts.get("doctor", 0),
-            "staff": counts.get("staff", 0),
             "admins": counts.get("hospital_admin", 0),
             "departments": db.scalar(
                 select(func.count()).select_from(Department).where(Department.tenant_id == tid, Department.active)
@@ -315,13 +314,13 @@ def update_department(department_id: str, body: DepartmentBody, user: HospitalAd
     return _department_out(d)
 
 
-# --- people: doctors, staff, admins -----------------------------------------------
+# --- people: doctors and admins (no staff accounts since 2026-11-04) -----------------------------------------------
 
 
 class PersonCreate(ApiModel):
     email: str = Field(max_length=320)
     name: str = Field(min_length=1, max_length=200)
-    role: Literal["hospital_admin", "doctor", "staff"]
+    role: Literal["hospital_admin", "doctor"]
     phone: str = Field(default="", max_length=32)
     department_id: str | None = None
     registration_number: str = Field(default="", max_length=64)

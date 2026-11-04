@@ -20,13 +20,28 @@ class _ActivityPageState extends State<ActivityPage>
   bool _kiosks = false;
   List<Map<String, dynamic>> _rows = [];
 
+  /// Which view [_rows] came from. The two views have different fields, so
+  /// rows are only drawn in the layout they belong to: switching views used
+  /// to draw audit rows as kiosk rows for a moment, and the missing field
+  /// crashed the page (red error box, 2026-11-04).
+  bool? _rowsAreKiosks;
+
   @override
   Future<void> load() async {
-    final rows = await widget.api.get(_kiosks ? '/activity' : '/audit');
-    if (mounted) {
-      setState(() => _rows = (rows as List).cast<Map<String, dynamic>>());
+    final kiosks = _kiosks;
+    final rows = await widget.api.get(kiosks ? '/activity' : '/audit');
+    if (mounted && kiosks == _kiosks) {
+      setState(() {
+        _rows = (rows as List).cast<Map<String, dynamic>>();
+        _rowsAreKiosks = kiosks;
+      });
     }
   }
+
+  List<Map<String, dynamic>> get _shown =>
+      _rowsAreKiosks == _kiosks ? _rows : const [];
+
+  static String _text(Object? value) => value is String ? value : '';
 
   static String _action(String action) => switch (action) {
     'visit.viewed' => 'Opened a patient visit',
@@ -82,33 +97,27 @@ class _ActivityPageState extends State<ActivityPage>
               ? Rows(
                   columns: const ['When', 'Event', 'Details'],
                   rows: [
-                    for (final r in _rows)
+                    for (final r in _shown)
                       [
                         Text(when(r['at'])),
-                        Tag(r['event'] as String, switch (r['level']) {
+                        Tag(_text(r['event']), switch (r['level']) {
                           'error' => MedoraColors.danger,
                           'warning' => MedoraColors.warning,
                           _ => MedoraColors.primary,
                         }),
-                        SizedBox(
-                          width: 520,
-                          child: Text(r['message'] as String? ?? ''),
-                        ),
+                        SizedBox(width: 520, child: Text(_text(r['message']))),
                       ],
                   ],
                 )
               : Rows(
                   columns: const ['When', 'Who', 'What', 'Details'],
                   rows: [
-                    for (final r in _rows)
+                    for (final r in _shown)
                       [
                         Text(when(r['at'])),
-                        Text('${r['user']} (${roleName(r['role'])})'),
-                        Text(_action(r['action'] as String)),
-                        SizedBox(
-                          width: 380,
-                          child: Text(r['detail'] as String? ?? ''),
-                        ),
+                        Text('${_text(r['user'])} (${roleName(r['role'])})'),
+                        Text(_action(_text(r['action']))),
+                        SizedBox(width: 380, child: Text(_text(r['detail']))),
                       ],
                   ],
                 ),

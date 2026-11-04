@@ -136,7 +136,7 @@ class _DoctorScreenState extends ConsumerState<DoctorScreen> {
             padding: const EdgeInsets.fromLTRB(28, 26, 28, 48),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1320),
+                constraints: const BoxConstraints(maxWidth: double.infinity),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [

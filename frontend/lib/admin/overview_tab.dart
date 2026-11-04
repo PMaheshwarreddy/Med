@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import '../api/api_client.dart';
 
 import '../theme/medora_theme.dart';
 import 'admin_widgets.dart';
 
-/// The dashboard: headline figures, the week's sessions, system health and
-/// the latest activity.
+/// The dashboard: headline figures, the week's sessions, sessions by client
+/// and the latest activity. It refreshes itself; there is no Refresh button
+/// and no system-health panel (the user's request of 2026-11-04).
 class OverviewTab extends StatefulWidget {
   const OverviewTab({super.key, required this.admin});
 
@@ -16,22 +21,52 @@ class OverviewTab extends StatefulWidget {
 
 class _OverviewTabState extends State<OverviewTab> with Loader {
   Map<String, dynamic>? _data;
-  Map<String, dynamic>? _knowledge;
+
+  /// The page keeps itself current: no Refresh button.
+  static const _refreshEvery = Duration(seconds: 30);
+  Timer? _refresh;
+  bool _refreshing = false;
+
+  @override
+  void dispose() {
+    _refresh?.cancel();
+    super.dispose();
+  }
 
   @override
   Future<void> load() async {
-    final results = await Future.wait([
-      widget.admin.get('/api/admin/overview'),
-      widget.admin.get('/api/admin/knowledge/summary'),
-    ]);
-    _data = results[0] as Map<String, dynamic>;
-    _knowledge = results[1] as Map<String, dynamic>;
+    // Days are counted in the viewer's time zone (IST: 330 minutes).
+    _data =
+        await widget.admin.get(
+              '/api/admin/overview',
+              query: {'tz': '${DateTime.now().timeZoneOffset.inMinutes}'},
+            )
+            as Map<String, dynamic>;
+    _schedule();
+  }
+
+  void _schedule() {
+    _refresh?.cancel();
+    if (mounted) _refresh = Timer(_refreshEvery, _quietRefresh);
+  }
+
+  /// Fetches again without the progress bar or a flash of the page.
+  Future<void> _quietRefresh() async {
+    if (!mounted || busy || _refreshing) return _schedule();
+    _refreshing = true;
+    try {
+      await load();
+    } on ApiException {
+      _schedule(); // keeps the last figures; tries again later
+    } finally {
+      _refreshing = false;
+    }
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final d = _data;
-    final k = _knowledge;
     if (d == null) return Column(children: statusWidgets());
     final errors = d['errorsLast24h'] as int;
 
@@ -51,7 +86,7 @@ class _OverviewTabState extends State<OverviewTab> with Loader {
             KpiCard(
               icon: Icons.apartment_outlined,
               color: MedoraColors.primary,
-              label: 'Clients',
+              label: 'Active clients',
               value: '${d['activeClients']}',
               detail: '${d['clients']} in total',
             ),
@@ -60,7 +95,7 @@ class _OverviewTabState extends State<OverviewTab> with Loader {
               color: MedoraColors.teal,
               label: 'Patient sessions',
               value: formatCount(d['sessions'] as int),
-              detail: '${d['sessionsLast24h']} in 24 hours',
+              detail: '${d['sessionsLast24h']} in the last 24 hours',
             ),
             KpiCard(
               icon: Icons.description_outlined,
@@ -88,33 +123,21 @@ class _OverviewTabState extends State<OverviewTab> with Loader {
         ),
         const SizedBox(height: 16),
         SplitRow(
+          leftFlex: 3,
+          rightFlex: 2,
           left: Section(
             title: 'Patient sessions, last 7 days',
             child: _WeekChart(days: (d['sessionsByDay'] as List).cast()),
           ),
-          right: Section(title: 'System health', child: _Health(d, k)),
-        ),
-        const SizedBox(height: 16),
-        SplitRow(
-          leftFlex: 2,
-          rightFlex: 3,
-          left: Section(
+          right: Section(
             title: 'Sessions by client',
             child: _ClientBars(rows: (d['sessionsByClient'] as List).cast()),
           ),
-          right: Section(
-            title: 'Recent activity',
-            child: _Activity(rows: (d['recentActivity'] as List).cast()),
-          ),
         ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: busy ? null : () => run(() async {}),
-            icon: const Icon(Icons.refresh),
-            label: const Text('Refresh'),
-          ),
+        const SizedBox(height: 16),
+        Section(
+          title: 'Recent activity',
+          child: _Activity(rows: (d['recentActivity'] as List).cast()),
         ),
       ],
     );
@@ -122,7 +145,7 @@ class _OverviewTabState extends State<OverviewTab> with Loader {
 }
 
 /// One bar per day. A single series in a single colour: the title names it,
-/// so there is no legend; exact values are on hover and on the latest bar.
+/// so there is no legend; each day with sessions carries its number.
 class _WeekChart extends StatelessWidget {
   const _WeekChart({required this.days});
 
@@ -156,11 +179,9 @@ class _WeekChart extends StatelessWidget {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    // Label only the peak and today, not every bar.
+                    // Every day with sessions shows its number.
                     Text(
-                      counts[i] == peak || i == days.length - 1
-                          ? '${counts[i]}'
-                          : '',
+                      counts[i] > 0 ? '${counts[i]}' : '',
                       style: text.bodyMedium?.copyWith(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -255,113 +276,6 @@ class _ClientBars extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-/// Each line pairs an icon and a word with the colour, so state is never
-/// carried by colour alone.
-class _Health extends StatelessWidget {
-  const _Health(this.overview, this.knowledge);
-
-  final Map<String, dynamic> overview;
-  final Map<String, dynamic>? knowledge;
-
-  @override
-  Widget build(BuildContext context) {
-    final online = overview['online'] as bool;
-    final voice = overview['voice'] as Map;
-    final sync = overview['sync'] as Map;
-    final k = knowledge;
-
-    final (bool mirrorOk, String mirror) = !(sync['configured'] as bool)
-        ? (false, 'Not set up')
-        : (sync['lastError'] as String).isNotEmpty
-        ? (false, 'Failing: ${sync['lastError']}')
-        : (sync['pending'] as int) > 0
-        ? (true, '${formatCount(sync['pending'] as int)} rows waiting to copy')
-        : (true, 'Up to date, last copied ${formatDate(sync['lastSuccess'])}');
-
-    // The knowledge database (MEDORA_KNOWLEDGE_DATABASE_URL), counted live.
-    final totals = (k?['totals'] as Map?)?.cast<String, dynamic>();
-    final knowledgeOk = k?['reachable'] == true;
-    final numbers = totals == null
-        ? ''
-        : '${formatCount((totals['symptoms'] as num?) ?? 0)} symptoms, '
-              '${formatCount((totals['diseases'] as num?) ?? 0)} diseases, '
-              '${formatCount((totals['medications'] as num?) ?? 0)} medications';
-    final knowledgeDetail = k == null
-        ? 'Not checked'
-        : k['configured'] != true
-        ? 'Knowledge database not set up'
-        : knowledgeOk
-        ? numbers
-        : 'Knowledge database not reachable'
-              '${numbers.isEmpty ? '' : ' (last counted: $numbers)'}';
-
-    return Column(
-      children: [
-        _HealthLine(
-          'Connection',
-          online,
-          online ? 'Online' : 'Offline: working from the local database',
-          warnOnly: true,
-        ),
-        _HealthLine(
-          'Voice agent',
-          voice['available'] as bool,
-          voice['detail'] as String,
-          warnOnly: true,
-        ),
-        _HealthLine('Report model', true, overview['reportModel'] as String),
-        _HealthLine('Central database copy', mirrorOk, mirror),
-        _HealthLine('Medical knowledge', knowledgeOk, knowledgeDetail),
-      ],
-    );
-  }
-}
-
-class _HealthLine extends StatelessWidget {
-  const _HealthLine(this.label, this.ok, this.detail, {this.warnOnly = false});
-
-  final String label;
-  final bool ok;
-  final String detail;
-
-  /// Not being ok is a limitation, not a fault (for example being offline).
-  final bool warnOnly;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final color = ok
-        ? MedoraColors.teal
-        : warnOnly
-        ? MedoraColors.warning
-        : MedoraColors.danger;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(ok ? Icons.check_circle : Icons.error, color: color, size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: text.titleMedium?.copyWith(fontSize: 15)),
-                Text(
-                  detail,
-                  style: text.bodyMedium?.copyWith(fontSize: 13),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

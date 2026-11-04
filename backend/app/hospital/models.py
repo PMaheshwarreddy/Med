@@ -11,6 +11,7 @@ from ..models import new_id, now
 
 # What a hospital account may do. Doctors and staff get their own portals
 # later; for now only hospital admins have a portal (`/hospital`).
+# "staff" was removed on 2026-11-04 (the user's request); older rows may still say it.
 ROLES = ("hospital_admin", "doctor", "staff")
 
 

@@ -54,7 +54,7 @@ def test_the_company_opens_a_hospital_portal_and_accounts_stay_apart(client):
     assert client.post("/api/hospital/auth/login", json={"email": "admin@city.in", "password": "wrong"}).status_code == 401
 
 
-def test_the_hospital_admin_manages_departments_doctors_and_staff(client):
+def test_the_hospital_admin_manages_departments_and_doctors(client):
     tenant_id, _ = _hospital(client)
     token = _admin_of(client, tenant_id)
 
@@ -77,14 +77,13 @@ def test_the_hospital_admin_manages_departments_doctors_and_staff(client):
     assert made.status_code == 201
     person = made.json()["person"]
     assert person["department"] == "Cardiology" and made.json()["temporaryPassword"]
-    staff = client.post(
+    # Staff accounts were removed: only admins and doctors.
+    assert client.post(
         "/api/hospital/people",
         json={"email": "nurse@city.in", "name": "Asha", "role": "staff", "jobTitle": "Nurse"},
         headers=token,
-    ).json()["person"]
-    assert {p["role"] for p in client.get("/api/hospital/people", headers=token).json()} == {
-        "hospital_admin", "doctor", "staff",
-    }  # fmt: skip
+    ).status_code == 422
+    assert {p["role"] for p in client.get("/api/hospital/people", headers=token).json()} == {"hospital_admin", "doctor"}
     assert client.get("/api/hospital/departments", headers=token).json()["departments"][0]["doctors"] == 1
 
     # The doctor can sign in, but the hospital portal is for admins only.
@@ -102,14 +101,15 @@ def test_the_hospital_admin_manages_departments_doctors_and_staff(client):
     assert client.get("/api/hospital/auth/me", headers=doctor_token).status_code == 401
     assert client.post("/api/hospital/auth/login", json={"email": "dr.nair@city.in", "password": temporary}).status_code == 403
     # A reset gives a new temporary password and must be changed again.
-    reset = client.post(f"/api/hospital/people/{staff['id']}/reset-password", headers=token).json()
-    login = client.post("/api/hospital/auth/login", json={"email": "nurse@city.in", "password": reset["temporaryPassword"]})
+    client.patch(f"/api/hospital/people/{person['id']}", json={"active": True}, headers=token)
+    reset = client.post(f"/api/hospital/people/{person['id']}/reset-password", headers=token).json()
+    login = client.post("/api/hospital/auth/login", json={"email": "dr.nair@city.in", "password": reset["temporaryPassword"]})
     assert login.json()["user"]["mustChangePassword"] is True
 
     me_id = client.get("/api/hospital/auth/me", headers=token).json()["user"]["id"]
     assert client.patch(f"/api/hospital/people/{me_id}", json={"active": False}, headers=token).status_code == 422
     actions = [a["action"] for a in client.get("/api/hospital/audit", headers=token).json()]
-    assert {"department.created", "doctor.created", "staff.created", "doctor.updated", "staff.password_reset"} <= set(actions)
+    assert {"department.created", "doctor.created", "doctor.updated", "doctor.password_reset"} <= set(actions)
 
 
 def test_a_hospital_sees_only_its_own_visits_and_opening_one_is_audited(client):
