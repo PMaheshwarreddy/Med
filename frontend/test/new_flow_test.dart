@@ -466,7 +466,7 @@ void main() {
     expect(find.text('Dose in NFI 2011, page 45'), findsOneWidget);
     expect(find.byKey(const ValueKey('guideline-sources')), findsNothing);
     expect(find.text('Testing only'), findsNothing);
-    expect(find.text('Medora suggested'), findsOneWidget);
+    expect(find.text('Medora suggested'), findsNothing);
 
     // Nothing to sign without a diagnosis.
     FilledButton sign() =>

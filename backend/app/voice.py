@@ -284,7 +284,15 @@ how long: ഇത് തുടങ്ങിയിട്ട് എത്ര ദി�
 allergies: ഏതെങ്കിലും മരുന്നിനോ ഇഞ്ചക്ഷനോ അലർജിയുണ്ടോ? \
 pregnancy: ഇപ്പോൾ ഗർഭിണിയാണോ, അതോ ആകാൻ സാധ്യതയുണ്ടോ? \
 habits: പുകവലിക്കുകയോ പുകയില ഉപയോഗിക്കുകയോ ചെയ്യാറുണ്ടോ? and, as a reply of its own: മദ്യപിക്കാറുണ്ടോ? \
-band: ദയവായി ബാൻഡ് ധരിച്ച് സ്ക്രീനിൽ കാണിക്കുന്നത് പോലെ ചെയ്യുക.
+band: ദയവായി ബാൻഡ് ധരിച്ച് സ്ക്രീനിൽ കാണിക്കുന്നത് പോലെ ചെയ്യുക. \
+after the vitals: നന്ദി. then the next question, nothing else. \
+name: നിങ്ങളുടെ പേര് എന്താണ്? \
+phone: നിങ്ങളുടെ ഫോൺ നമ്പർ പറയാമോ?
+Use only the easy words people use at home in Kerala, never bookish or \
+literary Malayalam (say വിവരങ്ങൾ, not സുപ്രധാന വിവരങ്ങൾ; say പനി, വേദന, ചുമ). \
+Never use a Hindi word or Hindi (Devanagari) letters. Never thank the patient \
+for anything they did not do: thank only for an answer or for wearing the band, \
+and never mention a class, a lesson or anything not in this conversation.
 When you save details with update_intake: write symptoms, duration, \
 medications and allergies in Malayalam script, as the patient said them; write \
 the name in English letters; phone digits only; gender as male, female or other; \
@@ -448,9 +456,14 @@ def tool_declarations(decide_vitals: bool = False) -> list[dict]:
 _FOOTER = re.compile(r"\*?\s*Factual answers to health queries[^*\n]*\*?", re.I)
 
 
+# Hindi (Devanagari) letters the speech service sometimes mixes into a
+# Malayalam or English caption; Medora never speaks Hindi.
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]+")
+
+
 def clean_transcript(text: str) -> str:
-    """Medora's words without the service's disclaimer footer."""
-    return _FOOTER.sub("", text)
+    """Medora's words without the service's disclaimer footer or stray Hindi letters."""
+    return _DEVANAGARI.sub("", _FOOTER.sub("", text))
 
 
 # Sent to the model when staff resume a paused conversation. No "welcome

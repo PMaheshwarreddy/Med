@@ -45,9 +45,12 @@ report. Each input item has a task. Return ONE JSON object:
 item, in the same order.
 
 Tasks:
-- simplify: rewrite the English in plain, friendly words a patient with
-  little schooling understands, speaking to the patient as "you"; short
-  sentences{then_local}.
+- simplify: rewrite the English in very simple, everyday words a patient
+  with little schooling understands, speaking to the patient as "you"; short
+  sentences of at most 15 words. No medical terms: say "high temperature"
+  not "pyrexia", "stomach" not "abdominal", "blood test" not "CBC", "oxygen
+  level" not "SpO2" (keep the number); if a medical word cannot be avoided,
+  explain it in a few plain words{then_local}.
 - translate: keep the English exactly as given in "en"{translate_local}.
 - patient_words: the patient's own words. "en" must be in ENGLISH letters
   (translate them into English if they are in another language){words_local}.
@@ -78,7 +81,8 @@ def _prompt(code: str) -> str:
         name_local=(f'; in "{code}" the specific name {lang} speakers use for THIS condition, or '
                     f'if there is none, the English name written in {lang} script.'),
         about_local=f', in "en" and "{code}"',
-        local_rule=f"\n- {lang}: simple, polite, everyday {lang} in its own script.",
+        local_rule=(f"\n- {lang}: simple, polite, everyday spoken {lang} in its own script, the "
+                    "words people use at home; never bookish or literary words, never Hindi words."),
     )
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")

@@ -806,8 +806,7 @@ class _ConsultPageState extends State<ConsultPage> {
           number: 2,
           title: 'Prescription',
           subtitle: _meds.any((m) => m.fromAi)
-              ? 'Medora\'s reviewed suggestions are filled in: check, change '
-                    'or remove each one.'
+              ? 'Suggested medicines are filled in: check, change or remove each one.'
               : 'Search a medicine or a brand (e.g. Dolo 650).',
           done: medsDone,
           child: Column(
@@ -1930,7 +1929,6 @@ class _MedCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (med.fromAi) const Tag('Medora suggested', MedoraColors.ochre),
               IconButton(
                 tooltip: 'Remove',
                 onPressed: onRemove,

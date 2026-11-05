@@ -85,7 +85,13 @@ medicines: up to {most}. Treat THIS case, not only its fever:
   dose, frequency and duration.
 - Prefer medicines from the "Medicines in the knowledge base" list when they
   fit, copying the name exactly.
-- Paracetamol only when fever or pain is reported.
+- Paracetamol is NOT a default. Give it only when fever or pain is a main
+  complaint and no other suggested medicine already covers it; never add it
+  just to have a medicine on the list.
+- Choose the form that suits the patient and the condition: tablet,
+  capsule, syrup or suspension (children, or adults who cannot swallow
+  tablets), drops, inhaler, nebulisation, cream, gel, ointment, sachet, or
+  an injection when first-line care calls for one. Fill "form" accordingly.
 - Symptomatic treatment (fever, pain, cough, nausea) is fine for a likely
   self-limiting illness. Antibiotics, antivirals and steroids only when a
   listed condition clearly needs one; mark those prescription true.
