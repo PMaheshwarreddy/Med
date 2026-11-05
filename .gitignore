@@ -8,7 +8,9 @@ medora_2/
 medora_4/
 medora_5/
 medora6/
+docs/code-guide/
 medora_datasets*/
+
 
 # Vendor band SDK (not ours to publish)
 SDK/
@@ -23,3 +25,4 @@ frontend/build/
 __pycache__/
 .pytest_cache/
 .dart_tool/
+

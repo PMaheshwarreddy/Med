@@ -200,6 +200,18 @@ Future<List<http.Request>> pumpReport(
     if (path == '/api/sessions/s1/report/progress') {
       return json({
         'stage': 'panel',
+        'ready': {
+          'vitals': [
+            {
+              'name': 'heart_rate',
+              'value': '112 bpm',
+              'normal': '60-100',
+              'status': 'high',
+            },
+          ],
+          'urgency': 'urgent',
+          'department': 'General OPD',
+        },
         'roster': ['Neurology', 'Cardiology', 'Pulmonology'],
         'specialists': [
           {'name': 'Neurology', 'state': 'took_part'},
@@ -402,9 +414,14 @@ void main() {
       findsOneWidget,
     );
 
+    // What is already decided shows while the rest is written.
+    expect(find.byKey(const Key('early-urgency')), findsOneWidget);
+    expect(find.byKey(const Key('early-vitals')), findsOneWidget);
+
     hold.complete();
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Specialists are reviewing your case'), findsNothing);
+    expect(find.byKey(const Key('early-urgency')), findsNothing);
   });
 }

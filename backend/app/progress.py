@@ -22,6 +22,16 @@ class ReportProgress:
         self.asked: list[str] = []
         # specialist -> "took_part" | "stepped_aside" | "unavailable"
         self.answers: dict[str, str] = {}
+        # Parts of the report already decided, shown on the waiting screen
+        # while the rest is still being written (2026-11-04, the user's
+        # request: offline reports take minutes). Only final values go here:
+        # vitals (judged in code) and urgency/department (after the chair,
+        # never lowered later).
+        self.ready: dict = {}
+        self.updated = time.monotonic()
+
+    def show(self, part: str, value) -> None:
+        self.ready[part] = value
         self.updated = time.monotonic()
 
     def at(self, stage: str) -> None:
@@ -40,6 +50,7 @@ class ReportProgress:
     def to_json(self) -> dict:
         return {
             "stage": self.stage,
+            "ready": self.ready,
             # Every case is screened against the whole roster first.
             "roster": list(SPECIALISTS),
             "specialists": [

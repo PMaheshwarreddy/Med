@@ -692,3 +692,16 @@ def test_a_stuck_model_call_is_stopped_and_tried_once_more():
         return "ok"
 
     assert run(with_retries(slow_then_fine, "test", timeout=0.05)) == "ok"
+
+
+def test_finished_parts_are_shown_while_the_report_is_written(kb):
+    from app.progress import ReportProgress
+
+    progress = ReportProgress()
+    llm = Understander(UTI_SYMPTOMS, ["Urology"])
+    report = run(build_report(session_for("It burns when I pee", vitals={"heart_rate": 140}), llm, kb,
+                              FakePanel(UTI_PANEL), 5, progress))
+    ready = progress.to_json()["ready"]
+    assert ready["vitals"][0]["status"] in ("high", "normal", "low")
+    assert ready["department"] == report["department"]
+    assert ready["urgency"] in ("soon", "urgent", "emergency", "routine")

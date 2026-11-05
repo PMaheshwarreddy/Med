@@ -155,6 +155,13 @@ class _ReportScreenState extends ConsumerState<ReportScreen> {
         FilledButton(onPressed: _finish, child: Text(s.startOver)),
       ];
     } else if (_loading) {
+      // While the report is written, every part that is already decided is
+      // shown under the circle, one after another (2026-11-04): first what
+      // the patient gave, then the vitals, then urgency and department.
+      final patient = ref.watch(intakeProvider.select((s) => s.patient));
+      final ready = _progress?.ready ?? const <String, dynamic>{};
+      final early = _earlyView(patient, ready['vitals'] as List?);
+      final urgency = Urgency.values.asNameMap()[ready['urgency']];
       body = [
         const SizedBox(height: 8),
         PanelOrbit(progress: _progress),
@@ -163,6 +170,35 @@ class _ReportScreenState extends ConsumerState<ReportScreen> {
           s.reportTakesMinute,
           style: text.bodyMedium,
           textAlign: TextAlign.center,
+        ),
+        ReportLanguage(
+          code: s.language.code,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (urgency != null) ...[
+                const SizedBox(height: 24),
+                _Appear(
+                  key: const Key('early-urgency'),
+                  child: _UrgencyBanner.of(
+                    urgency: urgency,
+                    department: ready['department'] as String? ?? '',
+                  ),
+                ),
+              ],
+              const SizedBox(height: 24),
+              _Appear(child: PatientCard(view: early)),
+              const SizedBox(height: 20),
+              _Appear(child: ToldUsCard(view: early)),
+              if (early.vitals.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                _Appear(
+                  key: const Key('early-vitals'),
+                  child: VitalsCard(view: early),
+                ),
+              ],
+            ],
+          ),
         ),
       ];
     } else if (report == null) {
@@ -372,15 +408,59 @@ PatientView _legacyView(TriageReport r, PatientIntake p) =>
       'bilingual': false,
     });
 
-class _UrgencyBanner extends StatelessWidget {
-  const _UrgencyBanner({required this.report});
+/// What can be shown before the report exists: the patient's own details
+/// and answers (in their own words) and the vitals judged by the server.
+PatientView _earlyView(PatientIntake p, List? vitals) => PatientView.fromJson({
+  'patient': {
+    'name': p.name,
+    'age': p.age,
+    'gender': p.gender?.name,
+    'phone': p.phone,
+  },
+  'symptoms': {'en': p.symptoms},
+  'duration': {'en': p.duration},
+  'medicationsTaken': {'en': p.medications},
+  'allergies': {'en': p.allergies},
+  'vitals': [
+    for (final v in vitals ?? const [])
+      {...(v as Map).cast<String, dynamic>(), 'note': null},
+  ],
+  'bilingual': false,
+});
 
-  final TriageReport report;
+/// Fades and slides a part in when it first appears.
+class _Appear extends StatelessWidget {
+  const _Appear({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => TweenAnimationBuilder<double>(
+    tween: Tween(begin: 0, end: 1),
+    duration: const Duration(milliseconds: 450),
+    curve: Curves.easeOutCubic,
+    builder: (context, t, child) => Opacity(
+      opacity: t,
+      child: Transform.translate(offset: Offset(0, 16 * (1 - t)), child: child),
+    ),
+    child: child,
+  );
+}
+
+class _UrgencyBanner extends StatelessWidget {
+  _UrgencyBanner({required TriageReport report})
+    : urgency = report.urgency,
+      department = report.department;
+
+  const _UrgencyBanner.of({required this.urgency, required this.department});
+
+  final Urgency urgency;
+  final String department;
 
   @override
   Widget build(BuildContext context) {
     final r = ReportLanguage.stringsOf(context);
-    final (color, icon) = switch (report.urgency) {
+    final (color, icon) = switch (urgency) {
       Urgency.routine => (MedoraColors.teal, Icons.check_circle),
       Urgency.soon => (MedoraColors.primary, Icons.schedule),
       Urgency.urgent => (MedoraColors.warning, Icons.priority_high),
@@ -403,7 +483,7 @@ class _UrgencyBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  r.urgency(report.urgency.name),
+                  r.urgency(urgency.name),
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -411,7 +491,7 @@ class _UrgencyBanner extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(r.department(report.department), style: body),
+                Text(r.department(department), style: body),
               ],
             ),
           ),

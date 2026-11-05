@@ -668,6 +668,7 @@ class ReportProgress {
       roster = [
         for (final n in (j['roster'] as List? ?? const [])) n as String,
       ],
+      ready = (j['ready'] as Map? ?? const {}).cast<String, dynamic>(),
       specialists = [
         for (final s in (j['specialists'] as List? ?? const []))
           (
@@ -682,6 +683,9 @@ class ReportProgress {
 
   /// Every specialty the case is screened against.
   final List<String> roster;
+
+  /// Parts of the report already decided: `vitals`, `urgency`, `department`.
+  final Map<String, dynamic> ready;
 
   /// The specialists asked, each thinking, took_part, stepped_aside or
   /// unavailable.

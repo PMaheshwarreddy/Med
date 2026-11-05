@@ -570,6 +570,11 @@ async def build_report(
     writer = writer_llm or llm
     progress = progress or ReportProgress()
     flags, floor = vital_flags(session.vitals, session.age)
+    # Shown at once on the waiting screen: the vitals are judged in code.
+    progress.show("vitals", [
+        {k: v.get(k) for k in ("name", "value", "normal", "status")}
+        for v in assess_vitals(session.vitals, session.age)
+    ])
     if panel is None:
         progress.at("writing")
         return await _solo(session, llm, flags, floor, "\n".join(_case_lines(session, flags)), OFFLINE_NOTE)
@@ -649,6 +654,9 @@ async def build_report(
     # A specialist who called an emergency is not overruled below "urgent".
     if any(o["relevant"] and o["urgency"] == "emergency" for o in opinions):
         urgency = _raise(urgency, "urgent")
+    # Urgency is only ever raised from here on, so it can be shown now.
+    progress.show("urgency", urgency)
+    progress.show("department", _department(conclusion.get("department"), urgency, session.age))
 
     # The report writer (report_writer.py): a draft with medicines and
     # doses, a check of every condition against what the patient said, an
