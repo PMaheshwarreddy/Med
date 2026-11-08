@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from ..auth import user_for_token
+from ..patients import service as patients
 from ..models import Tenant
 from ..tenancy import find_tenant, record
 from ..vitals_need import vitals_needed
@@ -55,6 +56,16 @@ async def voice(ws: WebSocket, key: str = "", tenant: str = "", admin: str = "")
         # The language the patient chose by then (set_language).
         return await vitals_needed(state.llm, symptoms, age, language=ctx.language)
 
+    async def find_patient(number: str) -> list[dict]:
+        if not state.runtime.online:
+            return []
+
+        def look() -> list[dict]:
+            with Session(engine) as db:
+                return patients.returning(db, tenant_id, number)
+
+        return await asyncio.to_thread(look)
+
     language = start.get("language") if start.get("language") in ("auto", "en", "ml") else "en"
     known = start.get("known")
     ctx = VoiceContext(
@@ -65,6 +76,7 @@ async def voice(ws: WebSocket, key: str = "", tenant: str = "", admin: str = "")
         language=language,
         known=clean_intake(known) if isinstance(known, dict) else {},
         vitals_taken=bool(start.get("vitalsTaken")),
+        find_patient=find_patient,
     )
 
     async def inbound():

@@ -236,3 +236,81 @@ def record_out(patient: Patient | None) -> dict | None:
         "visits": patient.visits,
         "since": patient.created_at.isoformat(),
     }
+
+
+def mask_phone(number: str) -> str:
+    """"9876543210" -> "******3210"."""
+    return ("*" * max(0, len(number) - 4)) + number[-4:] if number else ""
+
+
+def returning(db: Session, tenant_id: str, query: str) -> list[dict]:
+    """"Have you visited before?" by an earlier visit number OR the phone
+    number (the user's rule of 2026-11-07: many patients do not keep the
+    visit number). Each match carries what the "Is this you?" pop-up shows
+    (name, age, masked phone, the last visit in short) and what a confirmed
+    patient need not be asked again (allergies, conditions, daily
+    medicines, operations, weight, habits). This hospital only."""
+    from ..doctor.models import DoctorReview
+
+    number = digits(query)
+    if len(number) == 10:
+        ids = list(
+            db.scalars(
+                select(Patient.id)
+                .where(Patient.tenant_id == tenant_id, Patient.phone == number)
+                .order_by(Patient.created_at)
+                .limit(8)
+            )
+        )
+    else:
+        ids = [m["id"] for m in lookup_visit(db, tenant_id, query)]
+    out = []
+    for patient_id in ids:
+        p = db.get(Patient, patient_id)
+        if p is None or p.tenant_id != tenant_id:
+            continue
+        last = db.scalars(
+            select(IntakeSession)
+            .where(IntakeSession.patient_id == p.id)
+            .order_by(IntakeSession.created_at.desc())
+            .limit(1)
+        ).first()
+        review = db.get(DoctorReview, last.id) if last is not None else None
+        diagnosis = (
+            [d.get("name") for d in (review.diagnosis or []) if d.get("name")]
+            if review is not None and review.status == "final"
+            else []
+        )
+        out.append(
+            {
+                "id": p.id,
+                "name": p.name,
+                "age": age_of(p),
+                "gender": p.gender,
+                "phone": mask_phone(p.phone),
+                "visits": p.visits or 0,
+                "lastVisit": {
+                    "at": last.created_at.isoformat(),
+                    "visit": last.id[:6].upper(),
+                    "complaint": last.symptoms,
+                    "diagnosis": diagnosis,
+                }
+                if last is not None
+                else None,
+                # Carried into this visit once the patient says "yes, this is me".
+                "known": {
+                    "name": p.name,
+                    "age": age_of(p),
+                    "gender": p.gender,
+                    "phone": p.phone,
+                    "email": p.email or "",
+                    "allergies": p.allergies or "",
+                    "conditions": p.conditions or "",
+                    "regularMedicines": p.regular_medicines or "",
+                    "surgeries": p.surgeries or "",
+                    "weightKg": p.weight_kg,
+                    "habits": (getattr(last, "habits", "") or "") if last is not None else "",
+                },
+            }
+        )
+    return out

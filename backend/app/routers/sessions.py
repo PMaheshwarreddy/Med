@@ -35,7 +35,8 @@ async def vitals_check(body: VitalsCheck, request: Request, tenant: Kiosk) -> di
 
 
 class VisitLookup(ApiModel):
-    """An earlier visit number (printed on the report), e.g. "AB12CD"."""
+    """An earlier visit number (printed on the report, e.g. "AB12CD") or
+    the phone number given at that visit."""
 
     visit: str = Field(min_length=6, max_length=40)
 
@@ -47,7 +48,7 @@ def find_patients(body: VisitLookup, db: Db, tenant: Kiosk, request: Request) ->
     if not request.app.state.runtime.online:
         return []
     try:
-        return patients.lookup_visit(db, tenant.id, body.visit)
+        return patients.returning(db, tenant.id, body.visit)
     except UNREACHABLE:
         return []
 

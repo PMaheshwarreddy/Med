@@ -704,14 +704,14 @@ def test_voice_tools_decide_on_vitals_and_never_measure_twice():
         # Vitals are a must: finishing before they were taken is refused
         # (twice at most, then the review screen takes them).
         tools = IntakeTools(VoiceContext(smart_band=True), emit=lambda item: asyncio.sleep(0))
-        assert (await tools.call("1", "finish_intake", {}))["result"].startswith("Not finished")
+        assert (await tools.call("1", "finish_intake", {"name": "Asha Rao", "phone": "9876543210"}))["result"].startswith("Not finished")
         assert not tools.finishing
         assert await tools.call("2", "request_vitals", {}) is None
-        assert (await tools.call("3", "finish_intake", {})) == {"result": "ok"}
+        assert (await tools.call("3", "finish_intake", {"name": "Asha Rao", "phone": "9876543210"})) == {"result": "ok"}
         tools = IntakeTools(VoiceContext(smart_band=True), emit=lambda item: asyncio.sleep(0))
         for i in range(IntakeTools.MAX_FINISH_REFUSALS):
-            assert (await tools.call(str(i), "finish_intake", {}))["result"].startswith("Not finished")
-        assert (await tools.call("9", "finish_intake", {})) == {"result": "ok"}
+            assert (await tools.call(str(i), "finish_intake", {"name": "Asha Rao", "phone": "9876543210"}))["result"].startswith("Not finished")
+        assert (await tools.call("9", "finish_intake", {"name": "Asha Rao", "phone": "9876543210"})) == {"result": "ok"}
 
         # A measurement whose call was dropped (new line to the model)
         # still reaches the model, as a message.
@@ -725,7 +725,7 @@ def test_voice_tools_decide_on_vitals_and_never_measure_twice():
         # Vitals the kiosk already took (the page was reloaded) are not taken again.
         tools = IntakeTools(VoiceContext(smart_band=True, vitals_taken=True), emit=lambda item: asyncio.sleep(0))
         assert "already" in (await tools.call("1", "request_vitals", {}))["result"]
-        assert (await tools.call("2", "finish_intake", {})) == {"result": "ok"}
+        assert (await tools.call("2", "finish_intake", {"name": "Asha Rao", "phone": "9876543210"})) == {"result": "ok"}
 
         # A kiosk without a band never mentions vitals.
         tools = IntakeTools(VoiceContext(smart_band=False), emit=lambda item: asyncio.sleep(0))

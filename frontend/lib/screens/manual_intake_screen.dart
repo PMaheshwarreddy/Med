@@ -9,6 +9,7 @@ import '../state/intake_controller.dart';
 import '../theme/medora_theme.dart';
 import '../widgets/intake_form.dart';
 import '../widgets/medora_scaffold.dart';
+import '../widgets/visited_before.dart';
 
 class ManualIntakeScreen extends ConsumerStatefulWidget {
   const ManualIntakeScreen({super.key});
@@ -60,9 +61,15 @@ class _ManualIntakeScreenState extends ConsumerState<ManualIntakeScreen> {
             style: text.bodyLarge?.copyWith(color: MedoraColors.muted),
           ),
           const SizedBox(height: 24),
+          VisitedBefore(find: ref.read(kioskApiProvider).findPatients),
+          const SizedBox(height: 20),
           AbsorbPointer(
             absorbing: _checking,
             child: IntakeForm(
+              // A confirmed returning patient refills the form.
+              key: ValueKey(
+                ref.watch(intakeProvider.select((x) => x.patient.patientId)),
+              ),
               initial: ref.read(intakeProvider).patient,
               submitLabel: _checking ? s.oneMoment : s.continueLabel,
               onSubmit: _submit,

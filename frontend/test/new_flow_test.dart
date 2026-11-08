@@ -127,7 +127,24 @@ void main() {
           'sessionId': sessionId.isEmpty ? null : sessionId,
         }),
         ('POST', '/api/handoffs/abc123code/phone/patients') => json([
-          {'id': 'p1', 'label': 'Asha Rao', 'age': 34},
+          {
+            'id': 'p1',
+            'name': 'Asha Rao',
+            'age': 34,
+            'phone': '******3210',
+            'lastVisit': {
+              'at': '2026-10-20T10:00:00Z',
+              'complaint': 'cough',
+              'diagnosis': ['Acute bronchitis'],
+            },
+            'known': {
+              'name': 'Asha Rao',
+              'age': 34,
+              'gender': 'female',
+              'phone': '9876543210',
+              'allergies': 'penicillin',
+            },
+          },
         ]),
         ('POST', '/api/handoffs/abc123code/phone') => http.Response('', 204),
         _ => json({'detail': 'Not found'}, 404),
@@ -137,12 +154,14 @@ void main() {
     expect(find.text('City Hospital'), findsOneWidget);
     expect(find.text('Have you visited this hospital before?'), findsOneWidget);
 
-    // A returning patient types an earlier visit number and picks
-    // themselves by full name.
+    // A returning patient says yes, types an earlier visit number, and
+    // confirms it is them in the "Is this you?" pop-up.
+    await tester.tap(find.byKey(const Key('visited-yes')));
+    await tester.pump();
     await tester.enterText(find.byKey(const Key('visited-number')), 'AB1');
     await tester.tap(find.byKey(const Key('visited-find')));
     await tester.pump();
-    expect(find.textContaining('6 letters and numbers'), findsOneWidget);
+    expect(find.textContaining('6-character visit number'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('visited-number')), 'ab12-cd');
     await tester.tap(find.byKey(const Key('visited-find')));
     await tester.pump(const Duration(milliseconds: 100));
@@ -150,21 +169,25 @@ void main() {
       (r) => r.url.path == '/api/handoffs/abc123code/phone/patients',
     );
     expect(jsonDecode(lookup.body), {'visit': 'ab12cd'});
+    expect(find.byKey(const Key('is-this-you')), findsOneWidget);
     expect(find.text('Asha Rao, 34'), findsOneWidget);
+    expect(find.textContaining('for cough'), findsOneWidget);
     await tester.tap(find.byKey(const Key('visited-p1')));
-    await tester.pump();
-    expect(find.textContaining('Welcome back'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.textContaining('Welcome back, Asha Rao'), findsOneWidget);
+    // What she told us last time is filled in, not asked again.
+    expect(find.text('penicillin'), findsOneWidget);
 
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Full name'),
+      find.widgetWithText(TextFormField, 'Full name *'),
       'Asha Rao',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'Age'), '34');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Age *'), '34');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '9876543210',
     );
-    await tester.tap(find.text('Female'));
+    // Gender came from her record: no need to choose it again.
     await tester.tap(find.text('Fever').first);
     await tester.tap(find.text('Diabetes'));
     await tester.pump();
@@ -184,6 +207,8 @@ void main() {
             )
             as Map<String, dynamic>;
     expect(sent['patientId'], 'p1');
+    expect(sent['gender'], 'female');
+    expect(sent['allergies'], 'penicillin');
     expect(sent['chronicConditions'], 'Diabetes');
     expect(find.text('Sent. Go back to the kiosk.'), findsOneWidget);
 

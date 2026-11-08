@@ -200,7 +200,19 @@ class _IntakeFormState extends State<IntakeForm> {
 
   void _submit() {
     setState(() => _showErrors = true);
-    if (!_formKey.currentState!.validate() || _gender == null) return;
+    final s = S.of(context);
+    // Every required field still wrong, in the order they appear.
+    final missing = [
+      _validateName(_name.text, s),
+      _validateAge(_age.text, s),
+      _validatePhone(_phone.text, s),
+      if (_gender == null) s.selectGender,
+      _required(_symptoms.text, s.describeSymptoms),
+    ].whereType<String>().toList();
+    if (!_formKey.currentState!.validate() || missing.isNotEmpty) {
+      if (missing.isNotEmpty) _showMissing(s, missing);
+      return;
+    }
     widget.onSubmit(
       PatientIntake(
         name: _name.text.trim(),
@@ -219,6 +231,45 @@ class _IntakeFormState extends State<IntakeForm> {
         weightKg: double.tryParse(_weight.text.trim().replaceAll(',', '.')),
         patientId: widget.initial.patientId,
         pregnancy: _pregnancy,
+      ),
+    );
+  }
+
+  void _showMissing(S s, List<String> missing) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const Key('missing-dialog'),
+        title: Text(s.missingTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final m in missing)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      size: 20,
+                      color: MedoraColors.danger,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(m)),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            key: const Key('missing-ok'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(s.missingOk),
+          ),
+        ],
       ),
     );
   }
@@ -250,7 +301,7 @@ class _IntakeFormState extends State<IntakeForm> {
                   LengthLimitingTextInputFormatter(80),
                 ],
                 decoration: InputDecoration(
-                  labelText: s.fullName,
+                  label: _Star(s.fullName),
                   prefixIcon: const Icon(Icons.badge_outlined),
                 ),
                 validator: (v) => _validateName(v, s),
@@ -265,7 +316,7 @@ class _IntakeFormState extends State<IntakeForm> {
                       LengthLimitingTextInputFormatter(3),
                     ],
                     decoration: InputDecoration(
-                      labelText: s.age,
+                      label: _Star(s.age),
                       prefixIcon: const Icon(Icons.cake_outlined),
                     ),
                     validator: (v) => _validateAge(v, s),
@@ -279,7 +330,7 @@ class _IntakeFormState extends State<IntakeForm> {
                       LengthLimitingTextInputFormatter(16),
                     ],
                     decoration: InputDecoration(
-                      labelText: s.phone,
+                      label: _Star(s.phone),
                       prefixIcon: const Icon(Icons.phone_outlined),
                     ),
                     validator: (v) => _validatePhone(v, s),
@@ -289,7 +340,7 @@ class _IntakeFormState extends State<IntakeForm> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _Prompt(s.gender),
+                  _Prompt(s.gender, required: true),
                   Row(
                     children: [
                       for (final (i, (value, icon)) in const [
@@ -371,7 +422,7 @@ class _IntakeFormState extends State<IntakeForm> {
                 maxLines: 6,
                 textCapitalization: TextCapitalization.sentences,
                 decoration: InputDecoration(
-                  labelText: s.feelingLabel,
+                  label: _Star(s.feelingLabel),
                   hintText: s.feelingHint,
                   alignLabelWithHint: true,
                 ),
@@ -663,16 +714,26 @@ Iterable<(A, B)> _zip<A, B>(List<A> a, List<B> b) sync* {
 
 /// A small heading above a group of choices.
 class _Prompt extends StatelessWidget {
-  const _Prompt(this.label);
+  const _Prompt(this.label, {this.required = false});
 
   final String label;
+  final bool required;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        label,
+      child: Text.rich(
+        TextSpan(
+          text: label,
+          children: [
+            if (required)
+              const TextSpan(
+                text: ' *',
+                style: TextStyle(color: MedoraColors.danger),
+              ),
+          ],
+        ),
         style: const TextStyle(
           fontSize: 15,
           fontWeight: FontWeight.w700,
@@ -889,4 +950,27 @@ class _FieldRow extends StatelessWidget {
       },
     );
   }
+}
+
+/// A field label with a red star: the field must be filled in.
+class _Star extends StatelessWidget {
+  const _Star(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      text: text,
+      children: const [
+        TextSpan(
+          text: ' *',
+          style: TextStyle(
+            color: MedoraColors.danger,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
 }

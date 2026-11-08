@@ -174,6 +174,7 @@ class _PhoneIntakePageState extends ConsumerState<PhoneIntakePage> {
         AbsorbPointer(
           absorbing: _sending,
           child: IntakeForm(
+            key: ValueKey(patient.patientId),
             initial: patient,
             submitLabel: _sending ? s.oneMoment : s.phoneSend,
             onSubmit: _submit,

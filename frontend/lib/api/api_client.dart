@@ -233,11 +233,11 @@ class ApiClient {
     return status;
   }
 
-  /// The person an earlier [visit] number belongs to (full name and age),
-  /// for "Have you visited before?". Empty when offline or on any failure.
-  Future<List<({String id, String label, int? age})>> findPatients(
-    String visit,
-  ) async {
+  /// "Have you visited before?": the people an earlier visit number or a
+  /// phone number belongs to, each with name, age, masked phone, the last
+  /// visit in short and the details to carry over (`known`). Empty when
+  /// offline or on any failure.
+  Future<List<Map<String, dynamic>>> findPatients(String visit) async {
     try {
       final body = await _send(
         () => _http.post(
@@ -248,12 +248,7 @@ class ApiClient {
         timeout: const Duration(seconds: 10),
       );
       return [
-        for (final p in body as List)
-          (
-            id: (p as Map)['id'] as String,
-            label: p['label'] as String,
-            age: p['age'] as int?,
-          ),
+        for (final p in body as List) Map<String, dynamic>.from(p as Map),
       ];
     } on ApiException {
       return const [];
@@ -327,7 +322,7 @@ class ApiClient {
     ),
   );
 
-  Future<List<({String id, String label, int? age})>> phoneFindPatients(
+  Future<List<Map<String, dynamic>>> phoneFindPatients(
     String code,
     String visit,
   ) async {
@@ -340,12 +335,7 @@ class ApiClient {
         ),
       );
       return [
-        for (final p in body as List)
-          (
-            id: (p as Map)['id'] as String,
-            label: p['label'] as String,
-            age: p['age'] as int?,
-          ),
+        for (final p in body as List) Map<String, dynamic>.from(p as Map),
       ];
     } on ApiException {
       return const [];

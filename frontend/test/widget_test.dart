@@ -83,6 +83,9 @@ void main() {
     await tester.tap(find.text('Continue'));
     await tester.pump();
 
+    expect(find.byKey(const Key('missing-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('missing-ok')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Enter your name'), findsOneWidget);
     expect(find.text('Select your gender'), findsOneWidget);
     expect(find.text('Describe your symptoms'), findsOneWidget);
@@ -99,17 +102,17 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Full name'),
+      find.widgetWithText(TextFormField, 'Full name *'),
       'Asha Rao',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'Age'), '34');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Age *'), '34');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '9876543210',
     );
     await tester.tap(find.text('Female'));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'What are you feeling?'),
+      find.widgetWithText(TextFormField, 'What are you feeling? *'),
       'Headache and fever',
     );
     await tester.pump();
@@ -142,17 +145,17 @@ void main() {
 
     expect(find.text('Vitals'), findsNothing);
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Full name'),
+      find.widgetWithText(TextFormField, 'Full name *'),
       'Asha Rao',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'Age'), '34');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Age *'), '34');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '9876543210',
     );
     await tester.tap(find.text('Female'));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'What are you feeling?'),
+      find.widgetWithText(TextFormField, 'What are you feeling? *'),
       'Headache and fever',
     );
     await tester.pump();
@@ -227,10 +230,10 @@ void main() {
 
     await choose('Fever');
     await choose('Cough');
-    expect(field('What are you feeling?'), 'Fever, Cough');
+    expect(field('What are you feeling? *'), 'Fever, Cough');
     // Tapping again takes it back out.
     await choose('Fever');
-    expect(field('What are you feeling?'), 'Cough');
+    expect(field('What are you feeling? *'), 'Cough');
 
     await choose('About a week');
     expect(field('How long have you had them?'), 'About a week');
@@ -318,17 +321,17 @@ void main() {
     await tester.tap(find.byKey(const Key('mode-manual')));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Full name'),
+      find.widgetWithText(TextFormField, 'Full name *'),
       'Asha Rao',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'Age'), '34');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Age *'), '34');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '9876543210',
     );
     await tester.tap(find.text('Female'));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'What are you feeling?'),
+      find.widgetWithText(TextFormField, 'What are you feeling? *'),
       'Pain in my knee after a twist',
     );
     await tester.pump();
@@ -355,17 +358,17 @@ void main() {
     await tester.tap(find.byKey(const Key('mode-manual')));
     await tester.pump(const Duration(milliseconds: 500));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Full name'),
+      find.widgetWithText(TextFormField, 'Full name *'),
       'Asha Rao',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'Age'), '34');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Age *'), '34');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '9876543210',
     );
     await tester.tap(find.text('Female'));
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'What are you feeling?'),
+      find.widgetWithText(TextFormField, 'What are you feeling? *'),
       'Fever and cough',
     );
     await tester.pump();
@@ -395,12 +398,12 @@ void main() {
     await pumpApp(tester);
     await tester.tap(find.byKey(const Key('mode-manual')));
     await tester.pump(const Duration(milliseconds: 500));
-    final name = find.widgetWithText(TextFormField, 'Full name');
+    final name = find.widgetWithText(TextFormField, 'Full name *');
     await tester.enterText(name, 'Asha2 Rao');
     // Numbers cannot be typed into a name at all.
     expect(find.text('Asha Rao'), findsOneWidget);
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '12345',
     );
     await tester.enterText(
@@ -410,18 +413,24 @@ void main() {
     await tester.ensureVisible(find.text('Continue'));
     await tester.tap(find.text('Continue'));
     await tester.pump();
+    expect(find.byKey(const Key('missing-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('missing-ok')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Enter a 10-digit mobile number'), findsOneWidget);
     expect(find.textContaining('Enter a valid email'), findsOneWidget);
     expect(find.text('Use letters only, no numbers'), findsNothing);
 
     // +91 and spaces are fine; a single letter is not a name.
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'Phone number'),
+      find.widgetWithText(TextFormField, 'Phone number *'),
       '+91 98765 43210',
     );
     await tester.enterText(name, 'A');
     await tester.tap(find.text('Continue'));
     await tester.pump();
+    expect(find.byKey(const Key('missing-dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('missing-ok')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Enter a 10-digit mobile number'), findsNothing);
     expect(find.text('Use letters only, no numbers'), findsOneWidget);
     expect(indianMobile('098765 43210'), '9876543210');
@@ -523,7 +532,7 @@ void main() {
     await tester.pump();
     final symptoms = tester
         .widget<TextFormField>(
-          find.widgetWithText(TextFormField, 'What are you feeling?'),
+          find.widgetWithText(TextFormField, 'What are you feeling? *'),
         )
         .controller!
         .text;

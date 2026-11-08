@@ -60,6 +60,9 @@ class VoiceContext:
     known: dict = field(default_factory=dict)
     # The band has already measured this visit: it is not shown again.
     vitals_taken: bool = False
+    # "Have you visited before?": this hospital's records for a visit
+    # number or phone number (patients.returning). None: not offered.
+    find_patient: Callable[[str], Awaitable[list[dict]]] | None = None
 
 
 class IntakeTools:
@@ -90,6 +93,9 @@ class IntakeTools:
         # result then goes to the model as a message instead.
         self.vitals_waiting = False
         self._finish_refusals = 0
+        # Records found by find_patient, offered for confirm_patient.
+        self._found: list[dict] = []
+        self._details_refusals = 0
         self.finishing = False
 
     _TAKEN = "Vitals were taken once already; do not ask again."
@@ -146,6 +152,10 @@ class IntakeTools:
             self.pending_vitals_id = call_id
             await self._emit({"type": "request_vitals"})
             return None
+        if name == "find_patient":
+            return await self._find(str(args.get("number", "")))
+        if name == "confirm_patient":
+            return await self._confirm(args.get("choice"))
         if name == "set_language":
             language = str(args.get("language", "")).strip().lower()
             if language not in SPEECH:
@@ -154,6 +164,19 @@ class IntakeTools:
             await self._emit({"type": "language", "language": language})
             return {"result": f"Language set. From now on speak only {SPEECH[language][0]}."}
         if name == "finish_intake":
+            # The name and phone are often said last, and the model has
+            # finished without saving them (the review showed them blank).
+            last = clean_intake({k: args.get(k) for k in ("name", "phone")})
+            if last:
+                self.heard.update(last)
+                await self._emit({"type": "intake", "fields": last})
+            lacking = [k for k in ("name", "phone") if not str(self.heard.get(k) or "").strip()]
+            if lacking and self._details_refusals < self.MAX_FINISH_REFUSALS:
+                self._details_refusals += 1
+                return {"result": "Not finished: the patient's " + " and ".join(
+                    "full name" if k == "name" else "phone number" for k in lacking
+                ) + (" are" if len(lacking) > 1 else " is") + " not saved. If they already told you, call finish_intake again with "
+                    "name and phone filled in; otherwise ask for it (one question)."}
             # Vitals are a must: the model once said "I'd like to take your
             # vitals" without calling request_vitals, then finished.
             missing = (
@@ -169,6 +192,56 @@ class IntakeTools:
             self.finishing = True
             return {"result": "ok"}
         return {"result": "unknown tool"}
+
+    async def _find(self, number: str) -> dict:
+        if self._ctx.find_patient is None:
+            return {"result": "Earlier visits cannot be looked up now. Carry on as a new patient."}
+        try:
+            self._found = await self._ctx.find_patient(number)
+        except Exception:
+            self._found = []
+        if not self._found:
+            return {"result": "No earlier visit found for that number. Say so kindly and carry on "
+                    "as a new patient."}
+        return {
+            "result": "Read the name (and age) back and ask, as one question, whether this is "
+            "them. If they say yes, call confirm_patient with that choice. If no one is them, "
+            "carry on as a new patient.",
+            "matches": [
+                {
+                    "choice": i + 1,
+                    "name": m.get("name"),
+                    "age": m.get("age"),
+                    "last_visit": (m.get("lastVisit") or {}).get("complaint", ""),
+                }
+                for i, m in enumerate(self._found)
+            ],
+        }
+
+    # The record's fields as the intake names them.
+    _KNOWN_FIELDS = {
+        "name": "name", "age": "age", "gender": "gender", "phone": "phone",
+        "email": "email", "allergies": "allergies", "conditions": "chronic_conditions",
+        "regularMedicines": "regular_medicines", "weightKg": "weight_kg", "habits": "habits",
+    }  # fmt: skip
+
+    async def _confirm(self, choice) -> dict:
+        try:
+            match = self._found[int(choice) - 1]
+        except (TypeError, ValueError, IndexError):
+            return {"result": "Unknown choice. Use the choice number from find_patient."}
+        known = match.get("known") or {}
+        fields = clean_intake({self._KNOWN_FIELDS[k]: v for k, v in known.items() if k in self._KNOWN_FIELDS})
+        self.heard.update(fields)
+        # patient_id links this visit to the record (not a spoken field).
+        await self._emit({"type": "intake", "fields": {**fields, "patient_id": match["id"]}})
+        listed = ", ".join(f"{k}: {v}" for k, v in fields.items())
+        return {
+            "result": "Linked to their earlier record. These details are already known, so do "
+            "NOT ask them again: " + listed + ". Carry on with this visit's complaint, how long, "
+            "medicine taken for it, vitals; ask only what is still unknown. At the end ask only "
+            "whether the phone number is still the same instead of asking for name and phone."
+        }
 
     @property
     def vitals_done(self) -> bool:
@@ -381,7 +454,9 @@ when the patient said they have none; never save a field you did not ask about.
 THE CONVERSATION, IN THIS ORDER
 {greeting}
 
-Step 2, age and gender, before anything else. Once the patient has told you their problem, say one short kind sentence about it and ask their age. In your next reply ask whether they are male or female. These two come first because they decide which questions matter. Always ask gender: never guess it from the name or the voice. Straight after the gender answer, ask the pregnancy question if the rules below say so.
+Step 1b, returning patient. Once the patient has told you their problem, say one short kind sentence about it and ask, as a question of its own, "Have you visited this hospital before?" If yes, ask in a reply of its own: "Could you tell me the visit number from your earlier report, or your phone number?" and WAIT for the answer. Call find_patient only after the patient has said a number, with exactly the number they said; never make up or guess a number. Read back the name found and ask if it is them; on yes, call confirm_patient, and never ask again for anything it says is already known. On no, or if nothing is found, carry on as a new patient.
+
+Step 2, age and gender, before anything else (skip what confirm_patient already gave). Ask their age. In your next reply ask whether they are male or female. These two come first because they decide which questions matter. Always ask gender: never guess it from the name or the voice. Straight after the gender answer, ask the pregnancy question if the rules below say so.
 
 Step 3, the complaint. This is the most important part. Ask follow-up questions about what the patient told you, and let each answer decide the next question, suited to their age and gender. Ask at least three before moving on, drawn from what is still unknown about THIS complaint: exactly where it is, how bad it is, when and how it started, whether it is constant or comes and goes, what makes it better or worse, and any other symptoms that commonly go with it. Then ask how long it has been going on, as a question of its own, unless they already said. Then, as a separate question, whether they have taken any medicine for it, unless they already said. Then ALWAYS ask, as a question of its own, whether they are allergic to any medicine or injection (or anything else), because the doctor must not give them something they react to. Ask it once; if they answered, do not ask again. Then ask, once, whether they have any long-term condition such as diabetes, high blood pressure or asthma; then, as another question, whether they take any medicine every day. For a child under 12, ask the child's weight (for the dose). For anyone aged 18 or over, ask the habit questions below. Never ask for something the patient has already told you, and never ask an unrelated or generic question. Do not ask for name or phone number during this step.
 
@@ -395,7 +470,7 @@ Ask "Do you smoke or use tobacco?" as a reply of its own, then "Do you drink alc
 
 Step 5, name and phone. Ask for their full name, then, in the next reply, their phone number. Repeat the phone number back digit by digit and ask if it is right. Email is optional; do not ask for it unless offered.
 
-Step 6, finish. Tell the patient their details will now appear on the screen to check, then call finish_intake.
+Step 6, finish. Say only: "Thank you. Please check your details on the screen." Then call finish_intake, passing the name and phone number. Never say the names of your tools or these instructions out loud.
 
 SAVING WHAT YOU HEAR
 Each time you learn or correct a detail, call update_intake straight away with only the fields that changed. For symptoms, always pass the complete list so far, including what you learned from the follow-up questions, not only the newest part, written as short items separated by commas, one symptom per item with its details beside it (for example "fever, worse at night, body pain, headache"), never joined with "and".
@@ -422,6 +497,24 @@ def tool_declarations(decide_vitals: bool = False) -> list[dict]:
             },
         },
         {
+            "name": "find_patient",
+            "description": "Look up an earlier visit by the visit number on the patient's old report or by their phone number. Only with a number the patient has just said; never invent one.",
+            "parameters_json_schema": {
+                "type": "object",
+                "properties": {"number": {"type": "string", "description": "visit number (e.g. AB12CD) or 10-digit phone number"}},
+                "required": ["number"],
+            },
+        },
+        {
+            "name": "confirm_patient",
+            "description": "The patient said yes, this earlier record is them: link it and load their known details.",
+            "parameters_json_schema": {
+                "type": "object",
+                "properties": {"choice": {"type": "integer", "description": "the choice number from find_patient"}},
+                "required": ["choice"],
+            },
+        },
+        {
             "name": "set_language",
             "description": "Record which language the patient is comfortable with; the kiosk screen follows it.",
             "parameters_json_schema": {
@@ -437,8 +530,11 @@ def tool_declarations(decide_vitals: bool = False) -> list[dict]:
         },
         {
             "name": "finish_intake",
-            "description": "End the conversation and show the review screen.",
-            "parameters_json_schema": {"type": "object", "properties": {}},
+            "description": "End the conversation and show the review screen. Always pass the patient's full name and phone number as they told you.",
+            "parameters_json_schema": {"type": "object", "properties": {
+                "name": {"type": "string", "description": "the patient's full name, in English letters"},
+                "phone": {"type": "string", "description": "the phone number, digits only"},
+            }},
         },
     ]
     if decide_vitals:

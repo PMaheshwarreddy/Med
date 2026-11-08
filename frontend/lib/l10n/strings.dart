@@ -164,6 +164,13 @@ abstract class S {
   String get imNew;
   String get noneFound;
   String get welcomeBack;
+  String get yes;
+  String get no;
+  String get isThisYou;
+  String get notMe;
+  String lastVisit(String date, String why);
+  String lastDiagnosis(String diagnosis);
+  String filledFromRecord(String name);
   String get savingDetails;
   String get doctorWillSee;
   String visitNumber(String number);
@@ -224,6 +231,8 @@ abstract class S {
   String get validEmail;
   String get validName;
   String get selectGender;
+  String get missingTitle;
+  String get missingOk;
   String get describeSymptoms;
 
   /// Tap-to-select answers. The words go into the text field as they are.
@@ -546,12 +555,12 @@ class En extends S {
   String get visitedTitle => 'Have you visited this hospital before?';
   @override
   String get visitedSubtitle =>
-      'Type the visit number printed on an earlier report, then pick your name.';
+      'If yes, we can find your earlier record by your visit number or phone number.';
   @override
-  String get visitNumberLabel => 'Visit number';
+  String get visitNumberLabel => 'Visit number or phone number';
   @override
   String get visitNumberShort =>
-      'A visit number has 6 letters and numbers, like AB12CD.';
+      'Type the 6-character visit number (like AB12CD) or your 10-digit phone number.';
   @override
   String get findMe => 'Find me';
   @override
@@ -560,10 +569,26 @@ class En extends S {
   String get imNew => "I'm new";
   @override
   String get noneFound =>
-      'No visit has this number. You will be registered as new.';
+      'We could not find an earlier visit with this number. You will be registered as new.';
   @override
   String get welcomeBack =>
       'Welcome back. Your doctor will see your earlier visits.';
+  @override
+  String get yes => 'Yes';
+  @override
+  String get no => 'No';
+  @override
+  String get isThisYou => 'Is this you?';
+  @override
+  String get notMe => 'No, this is not me';
+  @override
+  String lastVisit(String date, String why) =>
+      why.isEmpty ? 'Last visit: $date' : 'Last visit: $date, for $why';
+  @override
+  String lastDiagnosis(String diagnosis) => "Doctor's diagnosis: $diagnosis";
+  @override
+  String filledFromRecord(String name) =>
+      'Welcome back, $name. We filled in your details from your last visit. Please check them.';
   @override
   String get savingDetails => 'Saving your details…';
   @override
@@ -696,6 +721,10 @@ class En extends S {
   String get validName => 'Use letters only, no numbers';
   @override
   String get selectGender => 'Select your gender';
+  @override
+  String get missingTitle => 'Please fill in these details';
+  @override
+  String get missingOk => 'OK';
   @override
   String get describeSymptoms => 'Describe your symptoms';
   @override
@@ -1216,12 +1245,12 @@ class Ml extends S {
   String get visitedTitle => 'മുമ്പ് ഈ ആശുപത്രിയിൽ വന്നിട്ടുണ്ടോ?';
   @override
   String get visitedSubtitle =>
-      'മുമ്പത്തെ റിപ്പോർട്ടിലുള്ള സന്ദർശന നമ്പർ നൽകി, നിങ്ങളുടെ പേര് തിരഞ്ഞെടുക്കുക.';
+      'ഉണ്ടെങ്കിൽ, സന്ദർശന നമ്പറോ ഫോൺ നമ്പറോ നൽകി നിങ്ങളുടെ പഴയ വിവരങ്ങൾ കണ്ടെത്താം.';
   @override
-  String get visitNumberLabel => 'സന്ദർശന നമ്പർ';
+  String get visitNumberLabel => 'സന്ദർശന നമ്പർ അല്ലെങ്കിൽ ഫോൺ നമ്പർ';
   @override
   String get visitNumberShort =>
-      'സന്ദർശന നമ്പറിൽ 6 അക്ഷരങ്ങളും അക്കങ്ങളും ഉണ്ട്, ഉദാ. AB12CD.';
+      '6 അക്ഷരമുള്ള സന്ദർശന നമ്പർ (ഉദാ. AB12CD) അല്ലെങ്കിൽ 10 അക്ക ഫോൺ നമ്പർ നൽകുക.';
   @override
   String get findMe => 'എന്നെ കണ്ടെത്തുക';
   @override
@@ -1230,10 +1259,26 @@ class Ml extends S {
   String get imNew => 'ഞാൻ പുതിയ ആളാണ്';
   @override
   String get noneFound =>
-      'ഈ നമ്പറിൽ ഒരു സന്ദർശനവും ഇല്ല. പുതിയ ആളായി രജിസ്റ്റർ ചെയ്യും.';
+      'ഈ നമ്പറിൽ പഴയ സന്ദർശനം കണ്ടില്ല. പുതിയ ആളായി രജിസ്റ്റർ ചെയ്യും.';
   @override
   String get welcomeBack =>
       'വീണ്ടും സ്വാഗതം. നിങ്ങളുടെ മുൻ സന്ദർശനങ്ങൾ ഡോക്ടർ കാണും.';
+  @override
+  String get yes => 'ഉണ്ട്';
+  @override
+  String get no => 'ഇല്ല';
+  @override
+  String get isThisYou => 'ഇത് നിങ്ങളാണോ?';
+  @override
+  String get notMe => 'ഇല്ല, ഇത് ഞാനല്ല';
+  @override
+  String lastVisit(String date, String why) =>
+      why.isEmpty ? 'അവസാനം വന്നത്: $date' : 'അവസാനം വന്നത്: $date, $why കാരണം';
+  @override
+  String lastDiagnosis(String diagnosis) => 'ഡോക്ടറുടെ നിർണയം: $diagnosis';
+  @override
+  String filledFromRecord(String name) =>
+      'വീണ്ടും സ്വാഗതം, $name. കഴിഞ്ഞ സന്ദർശനത്തിലെ വിവരങ്ങൾ ചേർത്തിട്ടുണ്ട്. ദയവായി പരിശോധിക്കുക.';
   @override
   String get savingDetails => 'നിങ്ങളുടെ വിവരങ്ങൾ സേവ് ചെയ്യുന്നു…';
   @override
@@ -1366,6 +1411,10 @@ class Ml extends S {
   String get validName => 'അക്ഷരങ്ങൾ മാത്രം, അക്കങ്ങൾ പാടില്ല';
   @override
   String get selectGender => 'ലിംഗം തിരഞ്ഞെടുക്കുക';
+  @override
+  String get missingTitle => 'ദയവായി ഈ വിവരങ്ങൾ നൽകുക';
+  @override
+  String get missingOk => 'ശരി';
   @override
   String get describeSymptoms => 'നിങ്ങളുടെ ബുദ്ധിമുട്ടുകൾ എഴുതുക';
   @override

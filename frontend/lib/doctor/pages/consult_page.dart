@@ -1549,13 +1549,12 @@ class _SuggestedMedicine extends StatelessWidget {
                   children: [
                     if (m['doctorOnly'] == true)
                       const Tag('For your decision', MedoraColors.warning),
-                    if (evidence is Map && '${m['dose'] ?? ''}'.isNotEmpty)
-                      evidence['found'] == true
-                          ? Tag('Dose in $source', MedoraColors.teal)
-                          : const Tag(
-                              'Dose not in guidelines',
-                              MedoraColors.warning,
-                            ),
+                    // Only a positive tag: "not in guidelines" read as a
+                    // fault to doctors (the user's request of 2026-11-07).
+                    if (evidence is Map &&
+                        evidence['found'] == true &&
+                        '${m['dose'] ?? ''}'.isNotEmpty)
+                      Tag('Dose in $source', MedoraColors.teal),
                   ],
                 ),
               ],

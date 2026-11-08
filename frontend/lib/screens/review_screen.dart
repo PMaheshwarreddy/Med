@@ -141,6 +141,7 @@ class _ReviewScreenState extends ConsumerState<ReviewScreen> {
             VisitedBefore(find: ref.read(kioskApiProvider).findPatients),
             const SizedBox(height: 20),
             IntakeForm(
+              key: ValueKey(session.patient.patientId),
               initial: session.patient,
               flagMissing: true,
               submitLabel: s.confirmAndReport,

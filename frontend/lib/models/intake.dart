@@ -142,6 +142,8 @@ class PatientIntake {
     regularMedicines: fields['regular_medicines'] as String?,
     habits: fields['habits'] as String?,
     weightKg: (fields['weight_kg'] as num?)?.toDouble(),
+    // A returning patient the voice agent confirmed.
+    patientId: fields['patient_id'] as String?,
   );
 
   /// What is known so far, as the voice agent names the fields (the

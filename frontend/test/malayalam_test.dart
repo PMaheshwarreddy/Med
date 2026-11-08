@@ -140,15 +140,19 @@ void main() {
     // Required fields are explained in Malayalam.
     await tester.tap(find.text('തുടരുക'));
     await tester.pump();
+    // A pop-up lists what is missing, then each field says it too.
+    expect(find.text('ദയവായി ഈ വിവരങ്ങൾ നൽകുക'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('missing-ok')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('നിങ്ങളുടെ പേര് നൽകുക'), findsOneWidget);
 
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'മുഴുവൻ പേര്'),
+      find.widgetWithText(TextFormField, 'മുഴുവൻ പേര് *'),
       'Anu',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'വയസ്സ്'), '30');
+    await tester.enterText(find.widgetWithText(TextFormField, 'വയസ്സ് *'), '30');
     await tester.enterText(
-      find.widgetWithText(TextFormField, 'ഫോൺ നമ്പർ'),
+      find.widgetWithText(TextFormField, 'ഫോൺ നമ്പർ *'),
       '9876543210',
     );
     await tester.tap(find.text('സ്ത്രീ'));
@@ -157,7 +161,7 @@ void main() {
     await tester.pump();
     final symptoms = tester
         .widget<TextFormField>(
-          find.widgetWithText(TextFormField, 'എന്താണ് അനുഭവപ്പെടുന്നത്?'),
+          find.widgetWithText(TextFormField, 'എന്താണ് അനുഭവപ്പെടുന്നത്? *'),
         )
         .controller!
         .text;

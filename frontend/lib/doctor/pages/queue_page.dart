@@ -202,8 +202,8 @@ class _QueuePageState extends State<QueuePage> {
                   ),
                   FilledButton.icon(
                     onPressed: _byNumber,
-                    icon: const Icon(Icons.campaign_outlined, size: 18),
-                    label: const Text('Call patient'),
+                    icon: const Icon(Icons.visibility_outlined, size: 18),
+                    label: const Text('View patient'),
                   ),
                   IconButton.outlined(
                     tooltip: 'Refresh',

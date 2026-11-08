@@ -43,14 +43,14 @@ def test_returning_patients_are_found_by_an_earlier_visit_number_with_their_full
     first = client.post("/api/sessions", json={**SESSION, "allergies": "penicillin"}, headers=headers).json()
     number = first["id"][:6].upper()  # the visit number printed on the report
     found = client.post("/api/intake/patients", json={"visit": number}, headers=headers).json()
-    assert [(p["label"], p["age"]) for p in found] == [("Asha Rao", 34)]
+    assert [(p["name"], p["age"]) for p in found] == [("Asha Rao", 34)]
     # Typed loosely ("ab12-cd") it is the same number.
     loose = number[:3].lower() + "-" + number[3:].lower()
     assert client.post("/api/intake/patients", json={"visit": loose}, headers=headers).json() == found
     # Someone else at the same phone number is a separate person, with their own visit.
     second = client.post("/api/sessions", json={**SESSION, "name": "Ravi Rao", "age": 60}, headers=headers).json()
     other = client.post("/api/intake/patients", json={"visit": second["id"][:6]}, headers=headers).json()
-    assert [p["label"] for p in other] == ["Ravi Rao"] and other[0]["id"] != found[0]["id"]
+    assert [p["name"] for p in other] == ["Ravi Rao"] and other[0]["id"] != found[0]["id"]
     # Too short to be a visit number, or another hospital's visit: nothing.
     assert client.post("/api/intake/patients", json={"visit": number[:4]}, headers=headers).status_code == 422
     assert client.post("/api/intake/patients", json={"visit": number}).json() == []
@@ -373,3 +373,54 @@ def test_the_doctor_gets_type_ahead_for_medicines_diagnoses_and_tests(client):
     assert suggest("test", "x") == []  # one letter: nothing yet
     assert client.get("/api/doctor/suggest", params={"kind": "bogus", "q": "ab"}, headers=dr).status_code == 422
     assert client.get("/api/doctor/suggest", params={"kind": "test", "q": "cbc"}).status_code == 401
+
+
+def test_returning_patient_by_phone_shows_last_visit_and_known_details(client):
+    tenant_id, key = _hospital(client)
+    headers = {"X-Kiosk-Key": key}
+    client.post(
+        "/api/sessions",
+        json={**SESSION, "allergies": "penicillin", "habits": "smokes"},
+        headers=headers,
+    )
+    found = client.post("/api/intake/patients", json={"visit": SESSION["phone"]}, headers=headers).json()
+    assert len(found) == 1
+    one = found[0]
+    assert one["name"] == "Asha Rao" and one["phone"].endswith(SESSION["phone"][-4:])
+    assert one["phone"].startswith("*")
+    assert one["lastVisit"]["complaint"] == SESSION["symptoms"]
+    assert one["known"]["allergies"] == "penicillin" and one["known"]["habits"] == "smokes"
+
+
+def test_voice_agent_finds_and_confirms_a_returning_patient():
+    import asyncio
+
+    from app.voice import IntakeTools, VoiceContext
+
+    record = {
+        "id": "p1", "name": "Asha Rao", "age": 34, "lastVisit": {"complaint": "cough"},
+        "known": {"name": "Asha Rao", "age": 34, "gender": "female", "phone": "9876543210",
+                  "allergies": "penicillin", "habits": ""},
+    }  # fmt: skip
+    sent = []
+
+    async def emit(item):
+        sent.append(item)
+
+    async def find(number):
+        return [record] if number == "9876543210" else []
+
+    async def scenario():
+        tools = IntakeTools(VoiceContext(smart_band=False, find_patient=find), emit)
+        none = await tools.call("1", "find_patient", {"number": "1111111111"})
+        assert "No earlier visit" in none["result"]
+        hit = await tools.call("2", "find_patient", {"number": "9876543210"})
+        assert hit["matches"][0]["name"] == "Asha Rao"
+        done = await tools.call("3", "confirm_patient", {"choice": 1})
+        assert "do NOT ask them again" in done["result"] and "penicillin" in done["result"]
+        fields = sent[-1]["fields"]
+        assert fields["patient_id"] == "p1" and fields["allergies"] == "penicillin"
+        # Name and phone came from the record: finishing is allowed.
+        assert (await tools.call("4", "finish_intake", {})) == {"result": "ok"}
+
+    asyncio.run(scenario())

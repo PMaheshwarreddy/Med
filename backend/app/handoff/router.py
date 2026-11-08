@@ -164,7 +164,8 @@ def phone_submit(code: str, body: PhoneIntake, db: Db, request: Request) -> None
 
 
 class VisitLookup(ApiModel):
-    """An earlier visit number (printed on the report), e.g. "AB12CD"."""
+    """An earlier visit number (printed on the report, e.g. "AB12CD") or
+    the phone number given at that visit."""
 
     visit: str = Field(min_length=6, max_length=40)
 
@@ -178,7 +179,7 @@ def phone_lookup(code: str, body: VisitLookup, db: Db, request: Request) -> list
     if not request.app.state.runtime.online:
         return []
     try:
-        return patients.lookup_visit(db, handoff.tenant_id, body.visit)
+        return patients.returning(db, handoff.tenant_id, body.visit)
     except UNREACHABLE:
         db.rollback()
         return []
