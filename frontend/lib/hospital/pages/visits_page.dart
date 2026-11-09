@@ -5,6 +5,7 @@ import '../../api/api_client.dart' show ApiException;
 import '../../theme/medora_theme.dart';
 import '../hospital_api.dart';
 import '../hospital_widgets.dart';
+import '../../widgets/pager.dart';
 
 /// Every kiosk visit at this hospital and its report. Opening one is
 /// written to the audit log (by the server).
@@ -19,6 +20,7 @@ class VisitsPage extends StatefulWidget {
 
 class _VisitsPageState extends State<VisitsPage>
     with HospitalLoader<VisitsPage> {
+  final _paging = Paging();
   final _search = TextEditingController();
   List<Map<String, dynamic>> _visits = [];
 
@@ -89,7 +91,12 @@ class _VisitsPageState extends State<VisitsPage>
                 ),
               ),
               const SizedBox(height: 14),
-              _VisitTable(visits: _visits, onOpen: _open),
+              _VisitTable(visits: _paging.slice(_visits), onOpen: _open),
+              PagerBar(
+                paging: _paging,
+                total: _visits.length,
+                onChanged: () => setState(() {}),
+              ),
             ],
           ),
         ),

@@ -127,6 +127,98 @@ def update_tenant(tenant_id: str, body: TenantUpdate, db: Db, request: Request):
     return _tenant_out(db, tenant)
 
 
+@router.get("/tenants/{tenant_id}/summary")
+def tenant_summary(tenant_id: str, db: Db) -> dict:
+    """A client's usage in numbers only (the user's rule of 2026-11-09: the
+    company sees how a hospital uses Medora, never its patients' data, so
+    nothing here names or describes a patient)."""
+    from ..doctor.models import DoctorReview
+    from ..hospital.models import Department, HospitalUser
+    from ..patients.models import Patient
+
+    tenant = _get(db, tenant_id)
+    now = datetime.now(timezone.utc)
+
+    def count(q) -> int:
+        return int(db.scalar(q) or 0)
+
+    visits = select(func.count()).select_from(IntakeSession).where(IntakeSession.tenant_id == tenant_id)
+    by_mode = dict(
+        db.execute(
+            select(IntakeSession.mode, func.count())
+            .where(IntakeSession.tenant_id == tenant_id)
+            .group_by(IntakeSession.mode)
+        ).all()
+    )
+    users = dict(
+        db.execute(
+            select(HospitalUser.role, func.count())
+            .where(HospitalUser.tenant_id == tenant_id, HospitalUser.active.is_(True))
+            .group_by(HospitalUser.role)
+        ).all()
+    )
+    last = db.scalar(select(func.max(IntakeSession.created_at)).where(IntakeSession.tenant_id == tenant_id))
+    return {
+        "name": tenant.name,
+        "active": tenant.active,
+        "createdAt": tenant.created_at.isoformat() if tenant.created_at else None,
+        "patients": count(select(func.count()).select_from(Patient).where(Patient.tenant_id == tenant_id)),
+        "visits": count(visits),
+        "visitsLast7Days": count(visits.where(IntakeSession.created_at >= now - timedelta(days=7))),
+        "visitsLast30Days": count(visits.where(IntakeSession.created_at >= now - timedelta(days=30))),
+        "byMode": {"voice": by_mode.get("voice", 0), "manual": by_mode.get("manual", 0), "phone": by_mode.get("phone", 0)},
+        "reports": count(
+            select(func.count()).select_from(TriageReport)
+            .where(TriageReport.session_id.in_(select(IntakeSession.id).where(IntakeSession.tenant_id == tenant_id)))
+        ),
+        "signedByDoctor": count(
+            select(func.count()).select_from(DoctorReview)
+            .where(DoctorReview.tenant_id == tenant_id, DoctorReview.status == "final")
+        ),
+        "doctors": users.get("doctor", 0),
+        "hospitalAdmins": users.get("hospital_admin", 0),
+        "departments": count(select(func.count()).select_from(Department).where(Department.tenant_id == tenant_id)),
+        "apiCalls24h": count(
+            select(func.count()).select_from(ApiRequestLog)
+            .where(ApiRequestLog.tenant_id == tenant_id, ApiRequestLog.at >= now - timedelta(hours=24))
+        ),
+        "lastVisitAt": last.isoformat() if last else None,
+    }
+
+
+@router.delete("/tenants/{tenant_id}", status_code=204)
+def delete_tenant(tenant_id: str, db: Db, request: Request):
+    """Deletes a client and EVERYTHING it owns, for good (the user's request
+    of 2026-11-09): its keys and API call log, visits and their reports,
+    patients, doctor reviews, phone hand-offs, hospital accounts and
+    sessions, departments, settings, audit log and activity log. The
+    default client cannot be deleted."""
+    from sqlalchemy import delete
+
+    from ..doctor.models import DoctorReview
+    from ..handoff.models import PhoneHandoff
+    from ..hospital.models import AuditEntry, Department, HospitalSession, HospitalSettings, HospitalUser
+    from ..patients.models import Patient
+
+    tenant = _get(db, tenant_id)
+    if tenant.is_default:
+        raise HTTPException(422, "The default client cannot be deleted")
+    name = tenant.name
+    visits = select(IntakeSession.id).where(IntakeSession.tenant_id == tenant_id)
+    users = select(HospitalUser.id).where(HospitalUser.tenant_id == tenant_id)
+    db.execute(delete(TriageReport).where(TriageReport.session_id.in_(visits)))
+    for model in (DoctorReview, PhoneHandoff):
+        db.execute(delete(model).where(model.tenant_id == tenant_id))
+    db.execute(delete(HospitalSession).where(HospitalSession.user_id.in_(users)))
+    for model in (IntakeSession, Patient, AuditEntry, Department, HospitalSettings, HospitalUser,
+                  ApiRequestLog, ApiKey, ActivityLog):
+        db.execute(delete(model).where(model.tenant_id == tenant_id))
+    db.delete(tenant)
+    db.commit()
+    request.app.state.offline.forget_tenant(tenant_id)
+    record(request.app.state.engine, "client.deleted", f"Client {name!r} and all its data deleted", None)
+
+
 @router.post("/tenants/{tenant_id}/kiosk-key", response_model=TenantOut)
 def rotate_kiosk_key(tenant_id: str, db: Db, request: Request):
     """Issues a new kiosk key. The previous key stops working at once."""

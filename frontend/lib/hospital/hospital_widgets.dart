@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../api/api_client.dart' show ApiException;
 import '../theme/medora_theme.dart';
 import '../widgets/medora_scaffold.dart' show MedoraCard, MedoraNotice;
+import '../widgets/pager.dart';
 
 /// The hospital portal's own building blocks. It shares the Medora look
 /// (theme, cards) with the rest of the app, but none of the company back
@@ -243,7 +244,9 @@ class UrgencyTag extends StatelessWidget {
 }
 
 /// A table that scrolls sideways inside its card on a narrow screen.
-class Rows extends StatelessWidget {
+/// Shown a page at a time (5 / 10 / 20 rows, the user's request of
+/// 2026-11-09); [onTap] gets the row's index in the whole list.
+class Rows extends StatefulWidget {
   const Rows({
     super.key,
     required this.columns,
@@ -256,7 +259,18 @@ class Rows extends StatelessWidget {
   final ValueChanged<int>? onTap;
 
   @override
+  State<Rows> createState() => _RowsState();
+}
+
+class _RowsState extends State<Rows> {
+  final _paging = Paging();
+
+  @override
   Widget build(BuildContext context) {
+    final columns = widget.columns;
+    final onTap = widget.onTap;
+    final rows = _paging.slice(widget.rows);
+    final offset = _paging.page * _paging.size;
     if (rows.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 20),
@@ -268,7 +282,7 @@ class Rows extends StatelessWidget {
         ),
       );
     }
-    return LayoutBuilder(
+    final table = LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: ConstrainedBox(
@@ -299,13 +313,27 @@ class Rows extends StatelessWidget {
             rows: [
               for (final (i, row) in rows.indexed)
                 DataRow(
-                  onSelectChanged: onTap == null ? null : (_) => onTap!(i),
+                  onSelectChanged: onTap == null
+                      ? null
+                      : (_) => onTap(offset + i),
                   cells: [for (final cell in row) DataCell(cell)],
                 ),
             ],
           ),
         ),
       ),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        table,
+        PagerBar(
+          paging: _paging,
+          total: widget.rows.length,
+          onChanged: () => setState(() {}),
+        ),
+      ],
     );
   }
 }

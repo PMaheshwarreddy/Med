@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../widgets/pager.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -259,7 +261,9 @@ class Section extends StatelessWidget {
 }
 
 /// Wide content scrolls sideways inside the card instead of the page.
-class AdminTable extends StatelessWidget {
+/// Shown a page at a time (5 / 10 / 20 rows, the user's request of
+/// 2026-11-09); [onTap] still gets the row's index in the whole list.
+class AdminTable extends StatefulWidget {
   const AdminTable({
     super.key,
     required this.columns,
@@ -274,40 +278,67 @@ class AdminTable extends StatelessWidget {
   final ValueChanged<int>? onTap;
 
   @override
+  State<AdminTable> createState() => _AdminTableState();
+}
+
+class _AdminTableState extends State<AdminTable> {
+  final _paging = Paging();
+
+  @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: constraints.maxWidth),
-          child: DataTable(
-            showCheckboxColumn: false,
-            headingRowHeight: 44,
-            headingRowColor: const WidgetStatePropertyAll(AdminColors.canvas),
-            headingTextStyle: const TextStyle(
-              fontFamily: MedoraFonts.sans,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-              color: MedoraColors.muted,
-            ),
-            dataTextStyle: const TextStyle(
-              fontFamily: MedoraFonts.sans,
-              fontSize: 14.5,
-              color: MedoraColors.text,
-            ),
-            dividerThickness: 0.6,
-            columns: [for (final c in columns) DataColumn(label: Text(c))],
-            rows: [
-              for (final (i, row) in rows.indexed)
-                DataRow(
-                  onSelectChanged: onTap == null ? null : (_) => onTap!(i),
-                  cells: [for (final cell in row) DataCell(cell)],
+    final shown = _paging.slice(widget.rows);
+    final offset = _paging.page * _paging.size;
+    final onTap = widget.onTap;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: constraints.maxWidth),
+              child: DataTable(
+                showCheckboxColumn: false,
+                headingRowHeight: 44,
+                headingRowColor: const WidgetStatePropertyAll(
+                  AdminColors.canvas,
                 ),
-            ],
+                headingTextStyle: const TextStyle(
+                  fontFamily: MedoraFonts.sans,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                  color: MedoraColors.muted,
+                ),
+                dataTextStyle: const TextStyle(
+                  fontFamily: MedoraFonts.sans,
+                  fontSize: 14.5,
+                  color: MedoraColors.text,
+                ),
+                dividerThickness: 0.6,
+                columns: [
+                  for (final c in widget.columns) DataColumn(label: Text(c)),
+                ],
+                rows: [
+                  for (final (i, row) in shown.indexed)
+                    DataRow(
+                      onSelectChanged: onTap == null
+                          ? null
+                          : (_) => onTap(offset + i),
+                      cells: [for (final cell in row) DataCell(cell)],
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
-      ),
+        PagerBar(
+          paging: _paging,
+          total: widget.rows.length,
+          onChanged: () => setState(() {}),
+        ),
+      ],
     );
   }
 }

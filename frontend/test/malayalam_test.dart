@@ -150,7 +150,10 @@ void main() {
       find.widgetWithText(TextFormField, 'മുഴുവൻ പേര് *'),
       'Anu',
     );
-    await tester.enterText(find.widgetWithText(TextFormField, 'വയസ്സ് *'), '30');
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'വയസ്സ് *'),
+      '30',
+    );
     await tester.enterText(
       find.widgetWithText(TextFormField, 'ഫോൺ നമ്പർ *'),
       '9876543210',

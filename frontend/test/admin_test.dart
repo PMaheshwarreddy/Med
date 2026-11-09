@@ -555,9 +555,8 @@ void main() {
     await signIn(tester);
     await openPage(tester, 'clients');
     expect(find.text('Default client'), findsWidgets);
-    // Calls made with client keys are on the same page.
-    expect(find.text('201 OK'), findsOneWidget);
-    expect(find.text('422 Failed'), findsOneWidget);
+    // The "Calls made with client keys" table was removed (2026-11-09).
+    expect(find.text('Calls made with client keys'), findsNothing);
 
     await tester.tap(find.byKey(const Key('add-client')));
     await tester.pumpAndSettle();
@@ -660,14 +659,12 @@ void main() {
     expect(server.requests, isNot(contains('POST /api/sessions')));
   });
 
-  testWidgets('sessions and logs name the client', (tester) async {
+  testWidgets('no Sessions page; logs name the client', (tester) async {
     await pumpAdmin(tester);
     await signIn(tester);
 
-    await openPage(tester, 'sessions');
-    expect(find.text('Asha Rao'), findsOneWidget);
-    expect(find.text('Default client'), findsOneWidget);
-    expect(find.text('Generated'), findsOneWidget);
+    // Patient sessions are not the company's to browse (2026-11-09).
+    expect(find.byKey(const Key('nav-sessions')), findsNothing);
 
     await openPage(tester, 'logs');
     expect(find.text('report.error'), findsOneWidget);

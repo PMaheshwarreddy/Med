@@ -90,6 +90,15 @@ class OfflineState:
         with self._lock:
             self._api_keys[hash_key(key)] = (api_key_id, tenant_id)
 
+    def forget_tenant(self, tenant_id: str) -> None:
+        """A deleted client: its kiosk and API keys stop working offline too."""
+        with self._lock:
+            self._tenants_by_id.pop(tenant_id, None)
+            for k in [k for k, t in self._tenants_by_key.items() if t.id == tenant_id]:
+                del self._tenants_by_key[k]
+            for k in [k for k, v in self._api_keys.items() if v[1] == tenant_id]:
+                del self._api_keys[k]
+
     def remember_admin(self, token: str) -> None:
         """A sign-in checked against the database just now. Offline it is
         trusted for `ADMIN_GRACE` more, never past the server's life."""

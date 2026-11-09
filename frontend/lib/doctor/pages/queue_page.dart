@@ -8,6 +8,7 @@ import '../../theme/medora_theme.dart';
 import '../../widgets/medora_scaffold.dart' show MedoraCard, MedoraNotice;
 import '../doctor_screen.dart' show DoctorApi;
 import '../doctor_widgets.dart';
+import '../../widgets/pager.dart';
 
 /// Patients waiting for a doctor: emergencies first, then by how long they
 /// have waited; the doctor's own department, or every patient.
@@ -228,10 +229,15 @@ class _QueuePageState extends State<QueuePage> {
         else if (_patients.isEmpty)
           const _AllClear()
         else
-          for (final p in _patients) ...[
-            _PatientRow(patient: p, onTake: () => _take(p)),
-            const SizedBox(height: 12),
-          ],
+          Paged(
+            children: [
+              for (final p in _patients)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _PatientRow(patient: p, onTake: () => _take(p)),
+                ),
+            ],
+          ),
       ],
     );
   }

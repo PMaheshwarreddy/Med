@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/medora_theme.dart';
 import '../widgets/medora_scaffold.dart';
 import 'admin_widgets.dart';
+import '../widgets/pager.dart';
 
 /// The way into the patient kiosk: pick a client and use the kiosk exactly
 /// as that client's patients would.
@@ -37,9 +38,8 @@ class _KioskTabState extends State<KioskTab> with Loader {
           style: text.bodyMedium,
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 16,
-          runSpacing: 16,
+        Paged(
+          layout: (shown) => Wrap(spacing: 16, runSpacing: 16, children: shown),
           children: [
             for (final c in _clients.cast<Map<String, dynamic>>())
               SizedBox(

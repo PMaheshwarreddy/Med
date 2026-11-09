@@ -16,7 +16,6 @@ import 'kiosk_tab.dart';
 import 'knowledge_tab.dart';
 import 'logs_tab.dart';
 import 'overview_tab.dart';
-import 'sessions_tab.dart';
 
 enum AdminPage {
   dashboard(
@@ -33,11 +32,6 @@ enum AdminPage {
     Icons.apartment_outlined,
     'Clients & keys',
     'Each hospital, its one key, and what its kiosks offer',
-  ),
-  sessions(
-    Icons.people_alt_outlined,
-    'Sessions',
-    'Patient intakes across all clients',
   ),
   logs(
     Icons.receipt_long_outlined,
@@ -175,7 +169,6 @@ class _AdminScreenState extends ConsumerState<AdminScreen> {
                                 admin: admin,
                                 onPreviewKiosk: _openKiosk,
                               ),
-                              AdminPage.sessions => SessionsTab(admin: admin),
                               AdminPage.logs => LogsTab(admin: admin),
                               AdminPage.database => KnowledgeTab(admin: admin),
                             },

@@ -6,7 +6,9 @@ import '../api/api_client.dart';
 import '../theme/medora_theme.dart';
 import '../widgets/medora_scaffold.dart';
 import 'admin_widgets.dart';
+import 'client_summary_dialog.dart';
 import 'hospital_admins_dialog.dart';
+import '../widgets/pager.dart';
 
 /// Every client (hospital) with its ONE key. The same key goes into the
 /// kiosk link and into the `X-Api-Key` header of the client's own system,
@@ -28,28 +30,22 @@ class ClientsTab extends StatefulWidget {
 }
 
 class _ClientsTabState extends State<ClientsTab> with Loader {
+  final _paging = Paging();
   List<dynamic> _clients = [];
-  List<dynamic> _calls = [];
   // client id -> its live key: calls and last use.
   Map<String, Map<String, dynamic>> _keys = {};
-  String? _callsOf;
 
   @override
   Future<void> load() async {
     final results = await Future.wait([
       widget.admin.get('/api/admin/tenants'),
       widget.admin.get('/api/admin/api-keys'),
-      widget.admin.get(
-        '/api/admin/api-logs',
-        query: {'limit': '100', 'tenant_id': ?_callsOf},
-      ),
     ]);
     _clients = results[0] as List;
     _keys = {
       for (final k in (results[1] as List).cast<Map<String, dynamic>>())
         if (k['revoked'] != true) k['tenantId'] as String: k,
     };
-    _calls = results[2] as List;
   }
 
   /// Applies [change] on screen at once and saves it in the background;
@@ -73,6 +69,70 @@ class _ClientsTabState extends State<ClientsTab> with Loader {
       if (!mounted) return;
       setState(() => client.addAll(before));
       _say(e.message);
+    }
+  }
+
+  /// Deletes the client and everything it owns, after its name is typed.
+  Future<void> _delete(dynamic client) async {
+    final c = client as Map<String, dynamic>;
+    final name = c['name'] as String;
+    final controller = TextEditingController();
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          key: const Key('delete-client-dialog'),
+          title: Text('Delete $name permanently?'),
+          content: SizedBox(
+            width: 460,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'This deletes the client, its key, every patient visit and '
+                  'report, its patients, doctors and hospital accounts, and its '
+                  'logs. It cannot be undone. To stop its kiosks but keep the '
+                  'data, use Disable instead.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  key: const Key('delete-client-name'),
+                  controller: controller,
+                  autofocus: true,
+                  onChanged: (_) => setDialog(() {}),
+                  decoration: InputDecoration(
+                    labelText: 'Type the client name to confirm',
+                    hintText: name,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('delete-client-confirm'),
+              style: FilledButton.styleFrom(
+                backgroundColor: MedoraColors.danger,
+              ),
+              onPressed: controller.text.trim() == name
+                  ? () => Navigator.pop(context, true)
+                  : null,
+              child: const Text('Delete permanently'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (sure == true) {
+      await run(
+        () => widget.admin.send('DELETE', '/api/admin/tenants/${c['id']}'),
+      );
     }
   }
 
@@ -232,7 +292,6 @@ class _ClientsTabState extends State<ClientsTab> with Loader {
 
   @override
   Widget build(BuildContext context) {
-    final names = {for (final c in _clients) c['id']: c['name'] as String};
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -256,69 +315,42 @@ class _ClientsTabState extends State<ClientsTab> with Loader {
           ],
         ),
         const SizedBox(height: 16),
-        for (final c in _clients) ...[
-          _ClientCard(
-            client: c as Map<String, dynamic>,
-            apiKey: _keys[c['id']],
-            busy: busy,
-            onChange: (change) => _patch(c['id'] as String, change),
-            onBlocked: _say,
-            onNewKey: () => _newKey(c),
-            onPreview: () => widget.onPreviewKiosk(c),
-            onHospitalPortal: () => showDialog<void>(
-              context: context,
-              builder: (_) =>
-                  HospitalAdminsDialog(admin: widget.admin, client: c),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-        Section(
-          title: 'Calls made with client keys',
-          subtitle:
-              "Every request a client's own system sent to the API, "
-              'newest first.',
-          actions: [
-            ClientFilter(
-              clients: _clients,
-              value: _callsOf,
-              onChanged: (id) {
-                _callsOf = id;
-                run(() async {});
-              },
-            ),
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: busy ? null : () => run(() async {}),
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
-          child: _calls.isEmpty
-              ? const EmptyNote('No calls yet.')
-              : AdminTable(
-                  columns: const [
-                    'Time',
-                    'Client',
-                    'Request',
-                    'Result',
-                    'Took',
-                  ],
-                  rows: [
-                    for (final c in _calls)
-                      [
-                        Text(formatDate(c['at'])),
-                        Text(names[c['tenantId']] ?? '–'),
-                        Clipped('${c['method']} ${c['path']}', width: 380),
-                        (c['status'] as int) < 400
-                            ? Pill('${c['status']} OK', MedoraColors.teal)
-                            : Pill(
-                                '${c['status']} Failed',
-                                MedoraColors.danger,
-                              ),
-                        Text('${c['durationMs']} ms'),
-                      ],
-                  ],
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final c in _paging.slice(_clients))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _ClientCard(
+                  client: c as Map<String, dynamic>,
+                  apiKey: _keys[c['id']],
+                  busy: busy,
+                  onChange: (change) => _patch(c['id'] as String, change),
+                  onBlocked: _say,
+                  onNewKey: () => _newKey(c),
+                  onPreview: () => widget.onPreviewKiosk(c),
+                  onHospitalPortal: () => showDialog<void>(
+                    context: context,
+                    builder: (_) =>
+                        HospitalAdminsDialog(admin: widget.admin, client: c),
+                  ),
+                  onSummary: () => showDialog<void>(
+                    context: context,
+                    builder: (_) =>
+                        ClientSummaryDialog(admin: widget.admin, client: c),
+                  ),
+                  onDelete: () => _delete(c),
                 ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // The pager sits at the bottom of the page (the user's request of
+        // 2026-11-09; the "Calls made with client keys" table was removed).
+        PagerBar(
+          paging: _paging,
+          total: _clients.length,
+          onChanged: () => setState(() {}),
         ),
       ],
     );
@@ -555,6 +587,8 @@ class _ClientCard extends StatelessWidget {
     required this.onNewKey,
     required this.onPreview,
     required this.onHospitalPortal,
+    required this.onSummary,
+    required this.onDelete,
   });
 
   final Map<String, dynamic> client;
@@ -572,6 +606,12 @@ class _ClientCard extends StatelessWidget {
 
   /// The hospital's own portal: its administrator logins.
   final VoidCallback onHospitalPortal;
+
+  /// Usage in numbers only, never patient data.
+  final VoidCallback onSummary;
+
+  /// Deletes the client and everything it owns (asks first).
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -745,10 +785,16 @@ class _ClientCard extends StatelessWidget {
               ),
             ],
           ),
-          if (!isDefault)
-            Wrap(
-              spacing: 8,
-              children: [
+          Wrap(
+            spacing: 8,
+            children: [
+              TextButton.icon(
+                key: Key('client-summary-${client['id']}'),
+                onPressed: onSummary,
+                icon: const Icon(Icons.insights_outlined, size: 18),
+                label: const Text('Summary'),
+              ),
+              if (!isDefault) ...[
                 TextButton.icon(
                   key: Key('hospital-portal-${client['id']}'),
                   onPressed: onHospitalPortal,
@@ -759,14 +805,28 @@ class _ClientCard extends StatelessWidget {
                   label: const Text('Hospital portal'),
                 ),
                 TextButton.icon(
+                  key: Key('client-switch-${client['id']}'),
                   onPressed: busy ? null : () => onChange({'active': !active}),
-                  icon: Icon(active ? Icons.block : Icons.check, size: 18),
-                  label: Text(
-                    active ? 'Switch off client' : 'Switch on client',
+                  icon: Icon(
+                    active
+                        ? Icons.power_settings_new_rounded
+                        : Icons.play_circle_outline_rounded,
+                    size: 18,
                   ),
+                  label: Text(active ? 'Disable' : 'Enable'),
+                ),
+                TextButton.icon(
+                  key: Key('client-delete-${client['id']}'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: MedoraColors.danger,
+                  ),
+                  onPressed: busy ? null : onDelete,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  label: const Text('Delete'),
                 ),
               ],
-            ),
+            ],
+          ),
         ],
       ),
     );

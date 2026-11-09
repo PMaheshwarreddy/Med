@@ -179,3 +179,42 @@ def test_a_client_is_created_with_its_hospital_admin_and_password(client):
     assert client.post("/api/admin/tenants", json=short, headers=ADMIN).status_code == 422
     names = [t["name"] for t in client.get("/api/admin/tenants", headers=ADMIN).json()]
     assert "Hill Hospital" not in names
+
+
+def test_a_client_can_be_deleted_with_everything_it_owns(client):
+    from tests.test_api import ADMIN, SESSION
+
+    made = client.post(
+        "/api/admin/tenants",
+        json={"name": "Gone Hospital", "adminName": "Ana", "adminEmail": "ana@gone.test", "adminPassword": "correct horse"},
+        headers=ADMIN,
+    ).json()
+    key = made["kioskKey"]
+    visit = client.post("/api/sessions", json=SESSION, headers={"X-Kiosk-Key": key}).json()["id"]
+    assert client.delete(f"/api/admin/tenants/{made['id']}", headers=ADMIN).status_code == 204
+    assert all(t["id"] != made["id"] for t in client.get("/api/admin/tenants", headers=ADMIN).json())
+    assert client.get(f"/api/sessions/{visit}").status_code == 404
+    # The key is gone, and the hospital admin cannot sign in.
+    assert client.post("/api/hospital/auth/login", json={"email": "ana@gone.test", "password": "correct horse"}).status_code in (401, 404)
+    default = next(t for t in client.get("/api/admin/tenants", headers=ADMIN).json() if t.get("isDefault"))
+    assert client.delete(f"/api/admin/tenants/{default['id']}", headers=ADMIN).status_code == 422
+
+
+def test_client_summary_shows_usage_numbers_only(client):
+    from tests.test_api import ADMIN, SESSION
+
+    made = client.post(
+        "/api/admin/tenants",
+        json={"name": "Count Hospital", "adminName": "Ana", "adminEmail": "ana@count.test", "adminPassword": "correct horse"},
+        headers=ADMIN,
+    ).json()
+    key = {"X-Kiosk-Key": made["kioskKey"]}
+    client.post("/api/sessions", json=SESSION, headers=key)
+    client.post("/api/sessions", json={**SESSION, "mode": "voice"}, headers=key)
+    summary = client.get(f"/api/admin/tenants/{made['id']}/summary", headers=ADMIN).json()
+    assert summary["visits"] == 2 and summary["patients"] == 2
+    assert summary["byMode"] == {"voice": 1, "manual": 1, "phone": 0}
+    assert summary["hospitalAdmins"] == 1 and summary["doctors"] == 0
+    # Nothing about a patient: no names, phones or symptoms anywhere.
+    flat = str(summary)
+    assert SESSION["name"] not in flat and SESSION["phone"] not in flat and SESSION["symptoms"] not in flat
